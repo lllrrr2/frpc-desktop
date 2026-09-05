@@ -1,30 +1,74 @@
 <script lang="ts" setup>
 import IconifyIconOffline from "@/components/IconifyIcon/src/iconifyIconOffline";
-import Breadcrumb from "@/layout/compoenets/Breadcrumb.vue";
-import { on, removeRouterListeners, send } from "@/utils/ipcUtils";
-import { useClipboard, useDebounceFn } from "@vueuse/core";
+import { on, send } from "@/utils/ipcUtils";
+import { refDebounced, useClipboard, useDebounceFn } from "@vueuse/core";
 import { ElMessage, FormInstance, FormRules } from "element-plus";
 import _ from "lodash";
 import path from "path";
 import {
   computed,
-  defineComponent,
+  onActivated,
   onMounted,
   onUnmounted,
   reactive,
-  ref
+  ref,
+  watch
 } from "vue";
 import { useI18n } from "vue-i18n";
 import { ipcRouters } from "../../../electron/core/IpcRouter";
 import commonIps from "./commonIp.json";
+import LocalPortDialog from "./LocalPortDialog.vue";
+import ProxyToolbar from "./ProxyToolbar.vue";
 
-defineComponent({
-  name: "Proxy"
+defineOptions({
+  name: "ProxyPage"
 });
 
 const { t } = useI18n();
 
+const hostPattern =
+  /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}|localhost|(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,})$/;
+
 const proxys = ref<Array<FrpcProxy>>([]);
+const searchKeyword = ref("");
+const debouncedSearchKeyword = refDebounced(searchKeyword, 150);
+const viewMode = ref<"card" | "list">("card");
+const currentPage = ref(1);
+const pageSize = 30;
+const filteredProxys = computed(() => {
+  const kw = debouncedSearchKeyword.value.trim().toLowerCase();
+  if (!kw) return proxys.value;
+  return proxys.value.filter(p => {
+    const domains = [...(p.customDomains ?? []), p.subdomain ?? ""]
+      .join(" ")
+      .toLowerCase();
+    return (
+      p.name.toLowerCase().includes(kw) ||
+      p.type.toLowerCase().includes(kw) ||
+      (p.localIP ?? "").toLowerCase().includes(kw) ||
+      String(p.localPort ?? "").includes(kw) ||
+      String(p.remotePort ?? "").includes(kw) ||
+      domains.includes(kw)
+    );
+  });
+});
+const paginatedProxys = computed(() => {
+  const start = (currentPage.value - 1) * pageSize;
+  return filteredProxys.value.slice(start, start + pageSize);
+});
+
+watch(debouncedSearchKeyword, () => {
+  currentPage.value = 1;
+});
+
+watch(
+  () => filteredProxys.value.length,
+  total => {
+    const lastPage = Math.max(1, Math.ceil(total / pageSize));
+    if (currentPage.value > lastPage) currentPage.value = lastPage;
+  }
+);
+
 const loading = ref({
   list: 1,
   form: 0,
@@ -50,6 +94,7 @@ const defaultForm: FrpcProxy = {
   remotePort: "8080",
   customDomains: [""],
   visitorsModel: "visitors",
+  serverUser: "",
   serverName: "",
   secretKey: "",
   bindAddr: "",
@@ -116,7 +161,7 @@ const editFormRules = reactive<FormRules>({
       trigger: "blur"
     },
     {
-      pattern: /^[\w-]+(\.[\w-]+)+$/,
+      pattern: hostPattern,
       message: t("proxy.form.formItem.localIP.patternMessage"),
       trigger: "blur"
     }
@@ -175,7 +220,7 @@ const editFormRules = reactive<FormRules>({
       trigger: "blur"
     },
     {
-      pattern: /^[\w-]+(\.[\w-]+)+$/,
+      pattern: hostPattern,
       message: t("proxy.form.formItem.bindAddr.patternMessage"),
       trigger: "blur"
     }
@@ -309,6 +354,61 @@ const handleRangePort = () => {
   return false;
 };
 
+const isVisitorProxy = (proxy: FrpcProxy) => {
+  return (
+    (proxy.type === "stcp" || proxy.type === "xtcp" || proxy.type === "sudp") &&
+    proxy.visitorsModel === "visitors"
+  );
+};
+
+const shouldShowLocalAddress = (proxy: FrpcProxy) => {
+  return (
+    (proxy.type !== "stcp" && proxy.type !== "xtcp" && proxy.type !== "sudp") ||
+    proxy.visitorsModel !== "visitors"
+  );
+};
+
+const getProxyModeLabel = (proxy: FrpcProxy) => {
+  if (proxy.type !== "stcp" && proxy.type !== "xtcp" && proxy.type !== "sudp") {
+    return "";
+  }
+  return proxy.visitorsModel === "visitors"
+    ? t("proxy.visitors")
+    : t("proxy.visitorsProvider");
+};
+
+const getProxyLocalAddress = (proxy: FrpcProxy) => {
+  if (!shouldShowLocalAddress(proxy)) return "-";
+  return `${proxy.localIP}:${proxy.localPort}`;
+};
+
+const getProxyMappingAddress = (proxy: FrpcProxy) => {
+  if (proxy.type === "tcp" || proxy.type === "udp") {
+    return `${frpcConfig.value?.serverAddr ?? ""}:${proxy.remotePort}`;
+  }
+  if (
+    (proxy.type === "http" || proxy.type === "https") &&
+    proxy.customDomains &&
+    proxy.customDomains.length > 0 &&
+    proxy.customDomains[0]
+  ) {
+    return `${proxy.type === "http" ? "http://" : "https://"}${
+      proxy.customDomains[0]
+    }`;
+  }
+  if (isVisitorProxy(proxy)) {
+    return `${proxy.bindAddr}:${proxy.bindPort}`;
+  }
+  return "";
+};
+
+const handleCopyMappingAddress = (proxy: FrpcProxy) => {
+  const address = getProxyMappingAddress(proxy);
+  if (address) {
+    handleCopyString(address);
+  }
+};
+
 const handleSubmit = async () => {
   if (!editFormRef.value) return;
   editFormRef.value.validate(valid => {
@@ -400,10 +500,10 @@ const handleOpenUpdate = (proxy: FrpcProxy) => {
   };
 };
 
-const handleReversalUpdate = (proxy: FrpcProxy) => {
+const handleProxyStatusChange = (proxy: FrpcProxy) => {
   send(ipcRouters.PROXY.modifyProxyStatus, {
     id: proxy._id,
-    status: proxy.status === 1 ? 0 : 1
+    status: proxy.status
   });
 };
 
@@ -545,33 +645,42 @@ const handleSelectFile = (type: number, ext: string[]) => {
   // });
 };
 
+const listenerCleanups: Array<() => void> = [];
+let hasActivatedOnce = false;
+
 onMounted(() => {
   handleLoadProxies();
   handleLoadFrpcConfig();
 
-  on(ipcRouters.SERVER.getServerConfig, data => {
-    if (data) {
-      frpcConfig.value = data;
-    }
-  });
-
-  on(ipcRouters.PROXY.getAllProxies, data => {
-    loading.value.list--;
-    proxys.value = data;
-  });
-
-  on(ipcRouters.SYSTEM.selectLocalFile, data => {
-    if (!data.canceled) {
-      switch (currSelectLocalFileType.value) {
-        case 1:
-          editForm.value.https2httpCaFile = data.path as string;
-          break;
-        case 2:
-          editForm.value.https2httpKeyFile = data.path as string;
-          break;
+  listenerCleanups.push(
+    on(ipcRouters.SERVER.getServerConfig, data => {
+      if (data) {
+        frpcConfig.value = data;
       }
-    }
-  });
+    })
+  );
+
+  listenerCleanups.push(
+    on(ipcRouters.PROXY.getAllProxies, data => {
+      loading.value.list = 0;
+      proxys.value = data;
+    })
+  );
+
+  listenerCleanups.push(
+    on(ipcRouters.SYSTEM.selectLocalFile, data => {
+      if (!data.canceled) {
+        switch (currSelectLocalFileType.value) {
+          case 1:
+            editForm.value.https2httpCaFile = data.path as string;
+            break;
+          case 2:
+            editForm.value.https2httpKeyFile = data.path as string;
+            break;
+        }
+      }
+    })
+  );
 
   const insertOrUpdateHook = (message: string) => {
     loading.value.form--;
@@ -587,36 +696,56 @@ onMounted(() => {
     // }
   };
 
-  on(ipcRouters.PROXY.createProxy, data => {
-    insertOrUpdateHook(t("common.createSuccess"));
-  });
+  listenerCleanups.push(
+    on(ipcRouters.PROXY.createProxy, () => {
+      insertOrUpdateHook(t("common.createSuccess"));
+    })
+  );
 
-  on(ipcRouters.PROXY.modifyProxy, data => {
-    insertOrUpdateHook(t("common.modifySuccess"));
-  });
+  listenerCleanups.push(
+    on(ipcRouters.PROXY.modifyProxy, () => {
+      insertOrUpdateHook(t("common.modifySuccess"));
+    })
+  );
 
-  on(ipcRouters.PROXY.deleteProxy, () => {
-    handleLoadProxies();
-    ElMessage({
-      type: "success",
-      message: t("common.deleteSuccess")
-    });
-  });
+  listenerCleanups.push(
+    on(ipcRouters.PROXY.deleteProxy, () => {
+      handleLoadProxies();
+      ElMessage({
+        type: "success",
+        message: t("common.deleteSuccess")
+      });
+    })
+  );
 
-  on(ipcRouters.PROXY.modifyProxyStatus, () => {
-    ElMessage({
-      type: "success",
-      message: t("common.modifySuccess")
-    });
-    // handleResetForm();
-    handleLoadProxies();
-    // edit.value.visible = false;
-  });
+  listenerCleanups.push(
+    on(ipcRouters.PROXY.modifyProxyStatus, () => {
+      ElMessage({
+        type: "success",
+        message: t("common.modifySuccess")
+      });
+      // handleResetForm();
+      handleLoadProxies();
+      // edit.value.visible = false;
+    })
+  );
 
-  on(ipcRouters.PROXY.getLocalPorts, data => {
-    loading.value.localPorts--;
-    localPorts.value = data;
-  });
+  listenerCleanups.push(
+    on(ipcRouters.PROXY.getLocalPorts, data => {
+      loading.value.localPorts = 0;
+      localPorts.value = data;
+    })
+  );
+});
+
+onActivated(() => {
+  if (!hasActivatedOnce) {
+    hasActivatedOnce = true;
+    return;
+  }
+  loading.value.list = 1;
+  handleLoadProxies();
+  handleLoadFrpcConfig();
 });
 
 const handleProxyTypeChange = e => {
@@ -634,28 +763,23 @@ const handleProxyTypeChange = e => {
 };
 
 onUnmounted(() => {
-  removeRouterListeners(ipcRouters.PROXY.createProxy);
-  removeRouterListeners(ipcRouters.PROXY.modifyProxy);
-  removeRouterListeners(ipcRouters.PROXY.deleteProxy);
-  removeRouterListeners(ipcRouters.PROXY.getAllProxies);
-  removeRouterListeners(ipcRouters.PROXY.modifyProxyStatus);
-  removeRouterListeners(ipcRouters.PROXY.getLocalPorts);
-  removeRouterListeners(ipcRouters.SYSTEM.selectLocalFile);
+  listenerCleanups.splice(0).forEach(off => off());
 });
 </script>
 <template>
   <!--  <coming-soon />-->
   <div class="main">
-    <breadcrumb>
-      <el-button type="primary" @click="handleOpenInsert">
-        <IconifyIconOffline icon="add" />
-      </el-button>
-    </breadcrumb>
-    <div class="app-container-breadcrumb" v-loading="loading.list > 0">
-      <template v-if="proxys && proxys.length > 0">
-        <el-row :gutter="15">
+    <ProxyToolbar
+      v-model:search-keyword="searchKeyword"
+      v-model:view-mode="viewMode"
+      @create="handleOpenInsert"
+      @refresh="handleLoadProxies"
+    />
+    <div v-loading="loading.list > 0" class="app-container-breadcrumb">
+      <template v-if="filteredProxys && filteredProxys.length > 0">
+        <el-row v-if="viewMode === 'card'" :gutter="15">
           <el-col
-            v-for="proxy in proxys"
+            v-for="proxy in paginatedProxys"
             :key="proxy._id"
             :lg="8"
             :md="8"
@@ -665,7 +789,7 @@ onUnmounted(() => {
             class="mb-[15px]"
           >
             <div
-              class="flex justify-between items-center p-4 w-full h-full bg-white rounded drop-shadow left-border animate__animated"
+              class="flex justify-between items-center p-4 w-full h-full bg-white rounded drop-shadow left-border"
             >
               <div class="left">
                 <div class="flex items-center">
@@ -688,14 +812,14 @@ onUnmounted(() => {
                     {{ t("proxy.visitors") }}
                   </el-tag>
                   <el-tag
-                    size="small"
-                    class="ml-2"
                     v-if="
                       (proxy.type === 'stcp' ||
                         proxy.type === 'xtcp' ||
                         proxy.type === 'sudp') &&
                       proxy.visitorsModel === 'visitorsProvider'
                     "
+                    size="small"
+                    class="ml-2"
                     >{{ t("proxy.visitorsProvider") }}
                   </el-tag>
                   <el-tag
@@ -732,13 +856,13 @@ onUnmounted(() => {
                 </div>
                 -->
                   <div
-                    class="text-[12px]"
                     v-if="
                       (proxy.type !== 'stcp' &&
                         proxy.type !== 'xtcp' &&
                         proxy.type !== 'sudp') ||
                       proxy.visitorsModel !== 'visitors'
                     "
+                    class="text-[12px]"
                   >
                     <span>{{ t("proxy.inner") }}：</span>
                     <span class="font-bold text-primary">
@@ -747,8 +871,8 @@ onUnmounted(() => {
                   </div>
 
                   <div
-                    class="text-[12px] cursor-pointer"
                     v-if="proxy.type === 'tcp' || proxy.type === 'udp'"
+                    class="text-[12px] cursor-pointer"
                   >
                     <span>{{ t("proxy.mappingAddress") }}：</span>
                     <span
@@ -763,13 +887,13 @@ onUnmounted(() => {
                     </span>
                   </div>
                   <div
-                    class="text-[12px]"
                     v-if="
                       (proxy.type === 'http' || proxy.type === 'https') &&
                       proxy.customDomains &&
                       proxy.customDomains.length > 0 &&
                       proxy.customDomains[0]
                     "
+                    class="text-[12px]"
                   >
                     <span>{{ t("proxy.mappingAddress") }}：</span>
                     <span
@@ -786,13 +910,13 @@ onUnmounted(() => {
                     >
                   </div>
                   <div
-                    class="text-[12px]"
                     v-if="
                       (proxy.type === 'stcp' ||
                         proxy.type === 'xtcp' ||
                         proxy.type === 'sudp') &&
                       proxy.visitorsModel === 'visitors'
                     "
+                    class="text-[12px]"
                   >
                     <span>{{ t("proxy.visitorsName") }}：</span>
                     <span class="font-bold text-primary">{{
@@ -800,13 +924,13 @@ onUnmounted(() => {
                     }}</span>
                   </div>
                   <div
-                    class="text-[12px]"
                     v-if="
                       (proxy.type === 'stcp' ||
                         proxy.type === 'xtcp' ||
                         proxy.type === 'sudp') &&
                       proxy.visitorsModel === 'visitors'
                     "
+                    class="text-[12px]"
                   >
                     <span>{{ t("proxy.mappingAddress") }}：</span>
                     <span
@@ -838,6 +962,16 @@ onUnmounted(() => {
 
               <div class="right">
                 <div class="flex flex-col gap-1 items-center">
+                  <el-switch
+                    v-model="proxy.status"
+                    :active-text="t('common.enable')"
+                    :active-value="1"
+                    :inactive-text="t('common.disable')"
+                    :inactive-value="0"
+                    :width="70"
+                    inline-prompt
+                    @change="handleProxyStatusChange(proxy)"
+                  />
                   <el-button
                     type="text"
                     size="small"
@@ -857,17 +991,6 @@ onUnmounted(() => {
                     </el-button>
                     <template #dropdown>
                       <el-dropdown-menu>
-                        <el-dropdown-item @click="handleReversalUpdate(proxy)">
-                          <IconifyIconOffline
-                            class="mr-1"
-                            :icon="!proxy.status ? 'toggle-on' : 'toggle-off'"
-                          />
-                          {{
-                            proxy.status
-                              ? t("common.disable")
-                              : t("common.enable")
-                          }}
-                        </el-dropdown-item>
                         <el-dropdown-item @click="handleDeleteProxy(proxy)">
                           <IconifyIconOffline
                             class="mr-1"
@@ -883,6 +1006,132 @@ onUnmounted(() => {
             </div>
           </el-col>
         </el-row>
+        <el-table
+          v-else
+          :data="paginatedProxys"
+          border
+          class="proxy-list-table"
+          stripe
+        >
+          <el-table-column
+            :label="t('proxy.form.formItem.name.label')"
+            min-width="150"
+            prop="name"
+            show-overflow-tooltip
+          >
+            <template #default="scope">
+              <span class="font-bold text-primary">{{ scope.row.name }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('proxy.form.formItem.proxyType.label')"
+            width="110"
+          >
+            <template #default="scope">
+              <el-tag size="small">{{ scope.row.type }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('common.mode')" width="120">
+            <template #default="scope">
+              <span>{{ getProxyModeLabel(scope.row) || "-" }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('proxy.inner')" min-width="170">
+            <template #default="scope">
+              <span>{{ getProxyLocalAddress(scope.row) }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('proxy.mappingAddress')" min-width="220">
+            <template #default="scope">
+              <el-button
+                v-if="getProxyMappingAddress(scope.row)"
+                link
+                type="primary"
+                @click="handleCopyMappingAddress(scope.row)"
+              >
+                {{ getProxyMappingAddress(scope.row) }}
+              </el-button>
+              <span v-else>-</span>
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('proxy.form.formItem.remotePort.label')"
+            width="120"
+            prop="remotePort"
+            show-overflow-tooltip
+          >
+            <template #default="scope">
+              <span>{{ scope.row.remotePort || "-" }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('common.status')" width="100">
+            <template #default="scope">
+              <el-switch
+                v-model="scope.row.status"
+                :active-text="t('common.enable')"
+                :active-value="1"
+                :inactive-text="t('common.disable')"
+                :inactive-value="0"
+                :width="70"
+                inline-prompt
+                @change="handleProxyStatusChange(scope.row)"
+              />
+            </template>
+          </el-table-column>
+          <el-table-column
+            :label="t('common.operation')"
+            align="right"
+            fixed="right"
+            width="190"
+          >
+            <template #default="scope">
+              <div class="proxy-table-actions">
+                <el-button
+                  link
+                  type="primary"
+                  size="small"
+                  @click="handleOpenUpdate(scope.row)"
+                >
+                  <template #icon>
+                    <IconifyIconOffline icon="edit" />
+                  </template>
+                  {{ t("common.modify") }}
+                </el-button>
+                <el-dropdown>
+                  <el-button link type="primary" size="small">
+                    <template #icon>
+                      <IconifyIconOffline icon="more-horiz" />
+                    </template>
+                    {{ t("common.more") }}
+                  </el-button>
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item @click="handleDeleteProxy(scope.row)">
+                        <IconifyIconOffline
+                          class="mr-1"
+                          icon="delete-rounded"
+                        />
+                        {{ t("common.delete") }}
+                      </el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div
+          v-if="filteredProxys.length > pageSize"
+          class="flex justify-center mt-4"
+        >
+          <el-pagination
+            v-model:current-page="currentPage"
+            :page-size="pageSize"
+            :total="filteredProxys.length"
+            background
+            layout="prev, pager, next"
+          />
+        </div>
       </template>
       <div
         v-else
@@ -893,8 +1142,9 @@ onUnmounted(() => {
     </div>
 
     <el-drawer
-      :title="edit.title"
       v-model="edit.visible"
+      :title="edit.title"
+      destroy-on-close
       direction="rtl"
       size="60%"
       @close="editForm = _.cloneDeep(defaultForm)"
@@ -907,11 +1157,12 @@ onUnmounted(() => {
       <!--      @close="editForm = defaultForm"-->
       <!--    >-->
       <el-form
+        v-if="edit.visible"
+        ref="editFormRef"
         v-loading="loading.form"
         label-position="top"
         :model="editForm"
         :rules="editFormRules"
-        ref="editFormRef"
       >
         <el-row :gutter="10">
           <el-col :span="24">
@@ -984,8 +1235,8 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-input
-                  type="password"
                   v-model="editForm.secretKey"
+                  type="password"
                   :placeholder="t('proxy.form.formItem.secretKey.placeholder')"
                   :show-password="true"
                 />
@@ -1043,17 +1294,17 @@ onUnmounted(() => {
                 <div class="flex gap-2 w-full">
                   <el-input-number
                     v-if="isHttp || isHttps"
+                    v-model="editForm.localPort"
                     placeholder="8080"
                     class="w-full"
                     :min="0"
                     :max="65535"
-                    v-model="editForm.localPort"
                     controls-position="right"
                   />
                   <el-input
                     v-else
-                    placeholder="8080"
                     v-model="editForm.localPort"
+                    placeholder="8080"
                   />
                   <el-button
                     plain
@@ -1084,9 +1335,9 @@ onUnmounted(() => {
                 <!--                  controls-position="right"-->
                 <!--                />-->
                 <el-input
+                  v-model="editForm.remotePort"
                   class="w-full"
                   placeholder="8080"
-                  v-model="editForm.remotePort"
                 />
               </el-form-item>
             </el-col>
@@ -1131,9 +1382,9 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-input
+                  v-model="editForm.subdomain"
                   class="w-full"
                   placeholder="subdomain"
-                  v-model="editForm.subdomain"
                 />
               </el-form-item>
             </el-col>
@@ -1188,9 +1439,9 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-input
+                  v-model="editForm.customDomains[di]"
                   class="domain-input"
                   placeholder="domain.com"
-                  v-model="editForm.customDomains[di]"
                 />
                 <el-button
                   class="ml-[10px]"
@@ -1203,8 +1454,8 @@ onUnmounted(() => {
                 <el-button
                   type="danger"
                   plain
-                  @click="handleDeleteDomain(di)"
                   :disabled="editForm.customDomains.length === 1"
+                  @click="handleDeleteDomain(di)"
                 >
                   <IconifyIconOffline icon="delete-rounded" />
                 </el-button>
@@ -1260,9 +1511,9 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-input
+                  v-model="editForm.locations[di]"
                   class="domain-input"
                   placeholder="/api"
-                  v-model="editForm.locations[di]"
                 />
                 <el-button
                   class="ml-[10px]"
@@ -1275,8 +1526,8 @@ onUnmounted(() => {
                 <el-button
                   type="danger"
                   plain
-                  @click="handleDeleteLocation(di)"
                   :disabled="editForm.locations.length === 1"
+                  @click="handleDeleteLocation(di)"
                 >
                   <IconifyIconOffline icon="delete-rounded" />
                 </el-button>
@@ -1297,42 +1548,42 @@ onUnmounted(() => {
                 label-position="left"
               >
                 <el-switch
+                  v-model="editForm.basicAuth"
                   :active-text="t('common.yes')"
                   inline-prompt
                   :inactive-text="t('common.no')"
-                  v-model="editForm.basicAuth"
                 />
               </el-form-item>
             </el-col>
-            <el-col :span="12" v-if="editForm.basicAuth">
+            <el-col v-if="editForm.basicAuth" :span="12">
               <el-form-item
                 :label="t('proxy.form.formItem.httpUser.label')"
                 prop="httpUser"
               >
                 <el-input
+                  v-model="editForm.httpUser"
                   class="w-full"
                   placeholder="httpUser"
-                  v-model="editForm.httpUser"
                 />
               </el-form-item>
             </el-col>
-            <el-col :span="12" v-if="editForm.basicAuth">
+            <el-col v-if="editForm.basicAuth" :span="12">
               <el-form-item
                 :label="t('proxy.form.formItem.httpPassword.label')"
                 prop="httpPassword"
               >
                 <el-input
+                  v-model="editForm.httpPassword"
                   type="password"
                   class="w-full"
                   placeholder="httpPassword"
-                  v-model="editForm.httpPassword"
                   :show-password="true"
                 />
               </el-form-item>
             </el-col>
           </template>
           <template v-if="hasPlugin">
-            <el-col :span="24" v-if="hasPlugin">
+            <el-col v-if="hasPlugin" :span="24">
               <div class="flex justify-between h3">
                 <div>{{ t("proxy.form.title.pluginConfig") }}</div>
               </div>
@@ -1351,15 +1602,15 @@ onUnmounted(() => {
                   ]"
                 >
                   <el-switch
+                    v-model="editForm.https2http"
                     :active-text="t('common.yes')"
                     inline-prompt
                     :inactive-text="t('common.no')"
-                    v-model="editForm.https2http"
                   />
                 </el-form-item>
               </el-col>
 
-              <el-col :span="24" v-if="editForm.https2http">
+              <el-col v-if="editForm.https2http" :span="24">
                 <el-form-item
                   :label="t('proxy.form.formItem.https2httpCaFile.label')"
                   prop="https2httpCaFile"
@@ -1375,8 +1626,8 @@ onUnmounted(() => {
                   ]"
                 >
                   <el-input
-                    class="button-input"
                     v-model="editForm.https2httpCaFile"
+                    class="button-input"
                     :placeholder="
                       t('proxy.form.formItem.https2httpCaFile.placeholder')
                     "
@@ -1398,7 +1649,7 @@ onUnmounted(() => {
                   </el-button>
                 </el-form-item>
               </el-col>
-              <el-col :span="24" v-if="editForm.https2http">
+              <el-col v-if="editForm.https2http" :span="24">
                 <el-form-item
                   :label="t('proxy.form.formItem.https2httpKeyFile.label')"
                   prop="https2httpKeyFile"
@@ -1414,8 +1665,8 @@ onUnmounted(() => {
                   ]"
                 >
                   <el-input
-                    class="cursor-pointer button-input"
                     v-model="editForm.https2httpKeyFile"
+                    class="cursor-pointer button-input"
                     :placeholder="
                       t('proxy.form.formItem.https2httpKeyFile.placeholder')
                     "
@@ -1442,12 +1693,51 @@ onUnmounted(() => {
           <template v-if="isStcpVisitors">
             <el-col :span="24">
               <el-form-item
+                :label="t('proxy.form.formItem.serverUser.label')"
+                prop="serverUser"
+              >
+                <template #label>
+                  <div class="inline-block">
+                    <div class="flex items-center">
+                      <div class="mr-1">
+                        <el-popover placement="top" trigger="hover" width="300">
+                          <template #default>
+                            {{ t("common.frpParameter") }}:
+                            <span class="font-black text-[#5A3DAA]"
+                              >serverUser</span
+                            >
+                            {{
+                              t("proxy.form.formItem.serverUser.description")
+                            }}
+                          </template>
+                          <template #reference>
+                            <IconifyIconOffline
+                              class="text-base"
+                              color="#5A3DAA"
+                              icon="info"
+                            />
+                          </template>
+                        </el-popover>
+                      </div>
+                      {{ t("proxy.form.formItem.serverUser.label") }}
+                    </div>
+                  </div>
+                </template>
+                <el-input
+                  v-model="editForm.serverUser"
+                  type="text"
+                  :placeholder="t('proxy.form.formItem.serverUser.placeholder')"
+                />
+              </el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item
                 :label="t('proxy.form.formItem.serverName.label')"
                 prop="serverName"
               >
                 <el-input
-                  type="text"
                   v-model="editForm.serverName"
+                  type="text"
                   :placeholder="t('proxy.form.formItem.serverName.placeholder')"
                 />
               </el-form-item>
@@ -1487,8 +1777,8 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-input
-                  type="text"
                   v-model="editForm.bindAddr"
+                  type="text"
                   placeholder="127.0.0.1"
                 />
               </el-form-item>
@@ -1528,11 +1818,11 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-input-number
+                  v-model="editForm.bindPort"
                   class="w-full"
                   :min="-1"
                   :step="1"
                   controls-position="right"
-                  v-model="editForm.bindPort"
                   placeholder="8080"
                 />
               </el-form-item>
@@ -1577,8 +1867,8 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-input
-                  type="text"
                   v-model="editForm.fallbackTo"
+                  type="text"
                   :placeholder="t('proxy.form.formItem.fallbackTo.placeholder')"
                 />
               </el-form-item>
@@ -1620,11 +1910,11 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-input-number
+                  v-model="editForm.fallbackTimeoutMs"
                   class="w-full"
                   :min="0"
                   :step="1"
                   controls-position="right"
-                  v-model="editForm.fallbackTimeoutMs"
                 />
               </el-form-item>
             </el-col>
@@ -1673,10 +1963,10 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-switch
+                  v-model="editForm.keepTunnelOpen"
                   :active-text="t('common.yes')"
                   inline-prompt
                   :inactive-text="t('common.no')"
-                  v-model="editForm.keepTunnelOpen"
                 />
               </el-form-item>
             </el-col>
@@ -1727,10 +2017,10 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-switch
+                  v-model="editForm.transport.useCompression"
                   :active-text="t('common.yes')"
                   inline-prompt
                   :inactive-text="t('common.no')"
-                  v-model="editForm.transport.useCompression"
                 />
               </el-form-item>
             </el-col>
@@ -1772,16 +2062,18 @@ onUnmounted(() => {
                   </div>
                 </template>
                 <el-switch
+                  v-model="editForm.transport.useEncryption"
                   :active-text="t('common.yes')"
                   inline-prompt
                   :inactive-text="t('common.no')"
-                  v-model="editForm.transport.useEncryption"
                 />
               </el-form-item>
             </el-col>
             <el-col :span="24">
               <el-form-item
-                :label="t('proxy.form.formItem.transportProxyProtocolVersion.label')"
+                :label="
+                  t('proxy.form.formItem.transportProxyProtocolVersion.label')
+                "
                 prop="transport.proxyProtocolVersion"
                 label-position="left"
               >
@@ -1795,7 +2087,11 @@ onUnmounted(() => {
                             <span class="font-black text-[#5A3DAA]"
                               >transport.proxyProtocolVersion</span
                             >
-                            {{ t("proxy.form.formItem.transportProxyProtocolVersion.description") }}
+                            {{
+                              t(
+                                "proxy.form.formItem.transportProxyProtocolVersion.description"
+                              )
+                            }}
                           </template>
                           <template #reference>
                             <IconifyIconOffline
@@ -1806,14 +2102,25 @@ onUnmounted(() => {
                           </template>
                         </el-popover>
                       </div>
-                      {{ t("proxy.form.formItem.transportProxyProtocolVersion.label") }}
+                      {{
+                        t(
+                          "proxy.form.formItem.transportProxyProtocolVersion.label"
+                        )
+                      }}
                     </div>
                   </div>
                 </template>
                 <el-radio-group
                   v-model="editForm.transport.proxyProtocolVersion"
                 >
-                  <el-radio :label="t('proxy.form.formItem.transportProxyProtocolVersion.empty')" value="" />
+                  <el-radio
+                    :label="
+                      t(
+                        'proxy.form.formItem.transportProxyProtocolVersion.empty'
+                      )
+                    "
+                    value=""
+                  />
                   <el-radio label="v1" value="v1" />
                   <el-radio label="v2" value="v2" />
                 </el-radio-group>
@@ -1846,49 +2153,12 @@ onUnmounted(() => {
     </el-drawer>
     <!--    </el-dialog>-->
 
-    <el-dialog
+    <LocalPortDialog
       v-model="listPortsVisible"
-      :title="t('proxy.dialog.listPorts.title')"
-      width="600"
-      top="5%"
-    >
-      <el-table
-        :data="localPorts"
-        stripe
-        v-loading="loading.localPorts"
-        border
-        height="400"
-      >
-        <el-table-column
-          :label="t('proxy.dialog.listPorts.table.columns.protocol')"
-          :width="100"
-          prop="protocol"
-        />
-        <el-table-column
-          :label="t('proxy.dialog.listPorts.table.columns.ip')"
-          prop="ip"
-        />
-        <el-table-column
-          :label="t('proxy.dialog.listPorts.table.columns.port')"
-          :width="80"
-          prop="port"
-        />
-        <el-table-column :label="t('common.operation')" :width="100">
-          <template #default="scope">
-            <el-button
-              type="text"
-              @click="handleSelectLocalPort(scope.row.port)"
-            >
-              <IconifyIconOffline
-                class="mr-2 cursor-pointer"
-                icon="gesture-select"
-              />
-              {{ t("common.select") }}
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </el-dialog>
+      :loading="loading.localPorts > 0"
+      :ports="localPorts"
+      @select="handleSelectLocalPort"
+    />
   </div>
 </template>
 
@@ -1956,5 +2226,17 @@ onUnmounted(() => {
 
 .button-input {
   width: calc(100% - 68px);
+}
+
+.proxy-table-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  white-space: nowrap;
+
+  :deep(.el-button) {
+    margin-left: 0;
+  }
 }
 </style>

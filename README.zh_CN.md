@@ -1,6 +1,7 @@
 <a name="readme-top"></a>
 
 <!-- PROJECT SHIELDS -->
+[![Downloads][downloads-shield]][downloads-url]
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
@@ -21,12 +22,16 @@
     支持所有frp版本 / 开机自启 / 可视化配置 / 免费开源
   </p>
 
-  <p><a href="https://jwinks.com/p/frp/#frp%E6%98%AF%E4%BB%80%E4%B9%88">使用教程</a></p>
-  <p><a href="https://jwinks.com/p/frpc-desktop-faq/">常见问题</a></p>
+  <p>🎊 <strong>下载量突破 10,000！感谢大家的支持！</strong></p>
+
+  <p><a href="https://jwinks.com/p/frp/">📖 文档</a> &nbsp; <a href="https://jwinks.com/p/frpc-desktop-faq/">常见问题</a></p>
 
 <a href="https://trendshift.io/repositories/12489" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12489" alt="luckjiawei%2Ffrpc-desktop | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 <a href="https://hellogithub.com/repository/b0dc116e9f2e4b8188da5a6d3e1bd8a4" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=b0dc116e9f2e4b8188da5a6d3e1bd8a4&claim_uid=8ZMOhz30mGJAHpa" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
 </div>
+
+> 💡 如果你更喜欢 **Web 界面**，试试 [Podux](https://github.com/luckjiawei/podux) —
+> 基于浏览器的 frpc 可视化管理工具。
 
 ## TODO
 
@@ -43,10 +48,19 @@
 - [x] 支持导入识别frpc.toml
 - [x] tcp、udp协议支持批量端口
 - [x] support multiple languages
+- [x] 支持代理快速搜索及卡片/列表分页
 
+
+## 常见问题
+
+### macOS universal 构建在 better-sqlite3 预编译文件处失败
+
+使用 electron-builder 26 构建时，请保留 `electron-builder.json5` 中的 `mac.x64ArchFiles` 规则。该规则允许 better-sqlite3 随包携带、在两个架构包中内容相同的 `darwin-x64.node` 和 `darwin-arm64.node` 保留在 universal 应用中，运行时由 better-sqlite3 选择匹配的架构文件。在 macOS 上运行 `npm run build:electron:mac` 重新构建。
 
 ## 里程碑
 
+- 2026-05-21: 发布v1.2.6版本 增加下载代理选择
+- 2026-03-26: 发布v1.2.5版本 修复已知BUG
 - 2025-09-10: 发布v1.2.3版本 修复已知BUG，支持代理协议，优化性能
 - 2025-04-22: 发布v1.2.2版本 修复已知BUG，支持HTTP路径设置
 - 2025-03-25: 发布v1.2.1版本 修复已知BUG，支持英文
@@ -102,56 +116,6 @@
 
 👉👉👉[点击去捐赠](https://jwinks.com/donate/)👈👈👈
 
-**捐赠名单**
-
-| 🕰 时间     | 📡 平台 | 🤲 捐赠者      | 💰 金额   | ✉️ 捐赠留言                                    |
-| ---------- | ------ | ------------- | -------- | --------------------------------------------- |
-| 2024-08-06 | 微信   | 三木          | 1 元     | 无                                            |
-| 2024-08-25 | 微信   | 晚风          | 1 元     | 无                                            |
-| 2024-08-27 | 微信   | x             | 1 元     | 无                                            |
-| 2024-10-09 | 微信   | 解脱          | 20 元    | 无                                            |
-| 2024-10-09 | 微信   | KMDN          | 20 元    | 无                                            |
-| 2024-10-14 | 微信   | 121           | 5 元     | 无                                            |
-| 2024-10-14 | 微信   | Different     | 10 元    | 感谢您的开源                                  |
-| 2024-10-16 | 微信   | 。 。 。      | 50 元    | 感谢开源的frp软件                             |
-| 2024-11-2  | 微信   | gesoft        | 10 元    | 加油                                          |
-| 2024-11-7  | 微信   | *进           | 10 元    | 谢谢，可见可得，省心省力                      |
-| 2024-11-8  | 微信   | **创          | 10 元    | 无                                            |
-| 2024-11-20 | 微信   | 一東          | 20 元    | 请你喝咖啡                                    |
-| 2024-11-20 | 微信   | KEVINSKH      | 10 元    | 感谢开发方便快捷的图形化操作界面👍             |
-| 2024-11-26 | 微信   |               | 3 元     | 无                                            |
-| 2024-11-26 | 微信   | Kaori         | 1 元     | 谢谢大佬的项目，要是能添加web控制页面就更好了 |
-| 2024-12-03 | 微信   | 17¥           | 20 元    | 谢谢，很方便的软件                            |
-| 2024-12-03 | 微信   | Cr@k3r        | 5 元     | 感谢你的工作                                  |
-| 2024-12-09 | 微信   | Vince         | 20 元    | 支持国人开发！                                |
-| 2024-12-11 | 支付宝 | **萌          | 20 元    | 加油加油                                      |
-| 2024-12-11 | 支付宝 | *石           | 20 元    | 无                                            |
-| 2024-12-16 | 微信   | 铁汉柔情      | 1 元     | 加油支持国人                                  |
-| 2024-12-16 | 微信   | 亚索🌪️         | 1 元     | 无                                            |
-| 2024-12-17 | 微信   | ppp789        | 1.6 元   | 无                                            |
-| 2024-12-17 | 支付宝 | *涛           | 10 元    | 无                                            |
-| 2024-12-18 | 微信   | 觉远          | 6.66 元  | 开源不易                                      |
-| 2024-12-19 | 微信   | 官方提醒      | 1 元     | 无                                            |
-| 2024-12-19 | 微信   | 木~易         | 6.66 元  | 加油                                          |
-| 2025-01-06 | 微信   | 如是          | 2 元     | 支持开源                                      |
-| 2025-01-13 | 微信   | David Veith   | 18.88 元 | 开源无价，么么哒                              |
-| 2025-01-14 | 微信   | Xterminal SSH | 199 元   | Xterminal SSH 客户端前来支援                  |
-| 2025-02-19 | 支付宝 | **杨          | 3 元     | 无                                            |
-| 2025-03-03 | 微信   |               | 6.66 元  | 感谢大佬，牛批                                |
-| 2025-03-23 | 微信   | AFC           | ¥3       |                                               |
-| 2025-03-28 | 支付宝 | **飞          | ¥2       |                                               |
-| 2025-04-04 | 微信   | *             | ¥18.88   | Thanks for open source                        |
-| 2025-04-07 | 支付宝 | **天          | ¥32      |                                               |
-| 2025-05-13 | WeChat | 三木          | ¥0.1     |                                               |
-| 2025-05-23 | WeChat | 梦想的泥量    | ¥8.88    |                                               |
-| 2025-06-26 | WeChat | 北斗🛰         | ¥6.66    |                                               |
-| 2025-07-11 | WeChat |               | ¥1       |                                               |
-| 2025-07-13 | WeChat | Kyle          | ¥1.88    |                                               |
-| 2025-07-14 | WeChat | 兔神          | ¥8.88    |                                               |
-| 2025-07-31 | Alipay | **均          | ¥8.88    |                                               |
-| 2025-08-18 | Alipay | **猛          | ¥5       |                                               |
-| 2025-08-26 | Wechat | *             | ¥1.66    |                                               |
-
 ## 贡献者
 
 <a href="https://github.com/luckjiawei/frpc-desktop/graphs/contributors">
@@ -166,6 +130,10 @@
 
 [![Star History Chart](https://api.star-history.com/svg?repos=luckjiawei/frpc-desktop&type=Date)](https://star-history.com/#luckjiawei/frpc-desktop&Date)
 <!-- MARKDOWN LINKS & IMAGES -->
+
+[downloads-shield]: https://img.shields.io/github/downloads/luckjiawei/frpc-desktop/total.svg?style=for-the-badge
+
+[downloads-url]: https://github.com/luckjiawei/frpc-desktop/releases
 
 [forks-shield]: https://img.shields.io/github/forks/luckjiawei/frpc-desktop.svg?style=for-the-badge
 

@@ -33,6 +33,7 @@ export default {
     status: {
       running: "Running",
       disconnected: "Disconnected",
+      connectionError: "Connection Failed",
       runningTime: "Running Time",
       frpcStatus: "Frpc {status}"
     },
@@ -53,6 +54,12 @@ export default {
         message:
           "Please go to the settings page and select the version before starting",
         confirm: "Go to Settings"
+      },
+      webServerPortInUse: {
+        title: "Prompt",
+        message:
+          "The web server port is already in use, please go to the settings page and change the port",
+        confirm: "Go to Settings"
       }
     }
   },
@@ -63,9 +70,17 @@ export default {
     button: {
       import: "Import"
     },
+    mirror: {
+      placeholder: "Download proxy"
+    },
+    viewMode: {
+      card: "Card",
+      list: "List"
+    },
     message: {
       importSuccess: "Import successfully",
-      deleteSuccess: "Delete successfully"
+      deleteSuccess: "Delete successfully",
+      copyDownloadLinkSuccess: "Copy download link successfully"
     },
     alert: {
       deleteConfirm: {
@@ -84,11 +99,14 @@ export default {
       }
     },
     version: {
+      size: "Size",
       downloadCount: "Download count:",
       publishTime: "Publish time:",
       downloaded: "Downloaded",
+      notDownloaded: "Not downloaded",
       delete: "Delete",
       download: "Download",
+      downloadLink: "Download Link",
       noVersions: "No available versions"
     }
   },
@@ -100,6 +118,16 @@ export default {
     content: {
       empty: "No log"
     },
+    tab: {
+      appLog: "App Log",
+      frpcLog: "Frpc Log"
+    },
+    search: {
+      placeholder: "Search logs..."
+    },
+    loading: {
+      text: "Loading..."
+    },
     autoRefresh: "Auto Refresh",
     autoRefreshTime: "{time}s after auto refresh"
   },
@@ -107,7 +135,7 @@ export default {
     button: {
       doc: "Documentation",
       donate: "Donate",
-      github: "Repository",
+      github: "Github",
       issues: "Feedback"
     },
     features: {
@@ -262,7 +290,7 @@ export default {
     },
     title: {
       versionSelection: "Version Selection",
-      webInterface: "Web Interface",
+      webInterface: "Web Server",
       transportConfiguration: "Transport Configuration",
       logConfiguration: "Log Configuration",
       systemConfiguration: "System Configuration",
@@ -332,6 +360,12 @@ export default {
     visitorsProvider: "Visitors Provider",
     visitorsName: "Visitors Name",
     noProxy: "No proxy",
+    refresh: "Refresh proxies",
+    search: "Search by name / type / IP / port / domain",
+    viewMode: {
+      card: "Card",
+      list: "List"
+    },
     modifyTitle: "Modify Proxy",
     createTitle: "Create Proxy",
     dialog: {
@@ -376,7 +410,8 @@ export default {
         },
         localIP: {
           label: "Local IP",
-          requireMessage: "Please enter local IP"
+          requireMessage: "Please enter local IP",
+          patternMessage: "Please enter a valid local address"
         },
         localPort: {
           label: "Local Port",
@@ -456,6 +491,13 @@ export default {
           requireMessage: "Please enter provider proxy name",
           placeholder: "stcp provider proxy name"
         },
+        serverUser: {
+          label: "Server User",
+          requireMessage: "Please enter server user",
+          placeholder: "Server user",
+          description:
+            "Fill this when visiting a provider proxy created by another server user. Leave it empty to use the current server user."
+        },
         keepTunnelOpen: {
           label: "Keep Tunnel Open",
           requireMessage: "Please select whether to keep tunnel open",
@@ -500,6 +542,7 @@ export default {
     save: "Save",
     close: "Close",
     mode: "Mode",
+    status: "Status",
     frpParameter: "Frp Parameter",
     operation: "Operation",
     select: "Select",

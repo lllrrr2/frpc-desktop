@@ -34,9 +34,17 @@ export const ipcRouters: IpcRouters = {
       path: "log/getFrpLogContent",
       controller: "logController.getFrpLogContent"
     },
+    getAppLogContent: {
+      path: "log/getAppLogContent",
+      controller: "logController.getAppLogContent"
+    },
     openFrpcLogFile: {
       path: "log/openFrpcLogFile",
       controller: "logController.openFrpcLogFile"
+    },
+    openAppLogFile: {
+      path: "log/openAppLogFile",
+      controller: "logController.openAppLogFile"
     }
   },
   VERSION: {
@@ -134,8 +142,8 @@ export const listeners: Listeners = {
     listenerMethod: "frpcProcessService.watchFrpcProcess",
     channel: "frpcProcess:watchFrpcLog"
   },
-  frpcProcessGuardian: {
-    listenerMethod: "frpcProcessService.frpcProcessGuardian",
-    channel: "frpcProcess:frpcProcessGuardian"
+  watchSystemUsage: {
+    listenerMethod: "systemService.getSystemUsage",
+    channel: "system:watchSystemUsage"
   }
 };

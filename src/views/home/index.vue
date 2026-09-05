@@ -2,10 +2,17 @@
 import Breadcrumb from "@/layout/compoenets/Breadcrumb.vue";
 import router from "@/router";
 import { useFrpcDesktopStore } from "@/store/frpcDesktop";
-import { on, removeRouterListeners, send } from "@/utils/ipcUtils";
+import { on, send } from "@/utils/ipcUtils";
 import { useDebounceFn } from "@vueuse/core";
 import { ElMessageBox } from "element-plus";
-import { computed, defineComponent, onMounted, onUnmounted, ref } from "vue";
+import {
+  computed,
+  defineComponent,
+  onMounted,
+  onUnmounted,
+  ref,
+  watch
+} from "vue";
 import { useI18n } from "vue-i18n";
 import { ipcRouters } from "../../../electron/core/IpcRouter";
 defineComponent({
@@ -14,7 +21,17 @@ defineComponent({
 
 const frpcDesktopStore = useFrpcDesktopStore();
 const loading = ref(false);
+const now = ref(Date.now());
+let uptimeTimer: ReturnType<typeof setInterval> | null = null;
 const { t } = useI18n();
+const listenerCleanups: Array<() => void> = [];
+
+// Three-state status: "running" | "error" | "stopped"
+const frpcStatus = computed(() => {
+  if (!frpcDesktopStore.frpcProcessRunning) return "stopped";
+  if (frpcDesktopStore.frpcConnectionError) return "error";
+  return "running";
+});
 
 const handleStartFrpc = () => {
   send(ipcRouters.LAUNCH.launch);
@@ -32,8 +49,13 @@ const handleButtonClick = useDebounceFn(() => {
     handleStartFrpc();
   }
 }, 300);
-let uptime = computed(() => {
-  const uptime = frpcDesktopStore.frpcProcessUptime / 1000;
+
+const uptime = computed(() => {
+  const lastStartTime = frpcDesktopStore.frpcProcessLastStartTime;
+  const uptime =
+    frpcDesktopStore.frpcProcessRunning && lastStartTime > 0
+      ? Math.max(0, now.value - lastStartTime) / 1000
+      : 0;
   const days = Math.floor(uptime / (24 * 60 * 60));
   const hours = Math.floor((uptime % (24 * 60 * 60)) / (60 * 60));
   const minutes = Math.floor((uptime % (60 * 60)) / 60);
@@ -52,52 +74,84 @@ let uptime = computed(() => {
   return result;
 });
 
+// Reset loading whenever the running state changes (covers cases where the IPC
+// reply is delayed or never arrives, e.g. macOS sudo/osascript flow).
+watch(
+  () => frpcDesktopStore.frpcProcessRunning,
+  () => {
+    loading.value = false;
+  }
+);
+
 onMounted(() => {
-  on(
-    ipcRouters.LAUNCH.launch,
-    () => {
-      frpcDesktopStore.refreshRunning();
-      loading.value = false;
-    },
-    (bizCode: string, message: string) => {
-      if (bizCode === "B1001") {
-        ElMessageBox.alert(
-          t("home.alert.configRequired.message"),
-          t("home.alert.configRequired.title"),
-          {
-            confirmButtonText: t("home.alert.configRequired.confirm")
-          }
-        ).then(() => {
-          router.replace({
-            name: "Config"
+  uptimeTimer = setInterval(() => {
+    now.value = Date.now();
+  }, 1000);
+  listenerCleanups.push(
+    on(
+      ipcRouters.LAUNCH.launch,
+      () => {
+        frpcDesktopStore.refreshRunning();
+        loading.value = false;
+      },
+      (bizCode: string, message: string) => {
+        console.log("bizCode", bizCode);
+        if (bizCode === "B1001") {
+          ElMessageBox.alert(
+            t("home.alert.configRequired.message"),
+            t("home.alert.configRequired.title"),
+            {
+              confirmButtonText: t("home.alert.configRequired.confirm")
+            }
+          ).then(() => {
+            router.replace({
+              name: "Config"
+            });
           });
-        });
-      } else if (bizCode === "B1005") {
-        ElMessageBox.alert(
-          t("home.alert.versionNotFound.message"),
-          t("home.alert.versionNotFound.title"),
-          {
-            confirmButtonText: t("home.alert.versionNotFound.confirm")
-          }
-        ).then(() => {
-          router.replace({
-            name: "Config"
+        } else if (bizCode === "B1005") {
+          ElMessageBox.alert(
+            t("home.alert.versionNotFound.message"),
+            t("home.alert.versionNotFound.title"),
+            {
+              confirmButtonText: t("home.alert.versionNotFound.confirm")
+            }
+          ).then(() => {
+            router.replace({
+              name: "Config"
+            });
           });
-        });
+        } else if (bizCode === "B1006") {
+          ElMessageBox.alert(
+            t("home.alert.webServerPortInUse.message"),
+            t("home.alert.webServerPortInUse.title"),
+            {
+              confirmButtonText: t("home.alert.webServerPortInUse.confirm")
+            }
+          ).then(() => {
+            router.replace({
+              name: "Config"
+            });
+          });
+        }
+        loading.value = false;
       }
-      loading.value = false;
-    }
+    )
   );
 
-  on(ipcRouters.LAUNCH.terminate, () => {
-    frpcDesktopStore.refreshRunning();
-    loading.value = false;
-  });
+  listenerCleanups.push(
+    on(ipcRouters.LAUNCH.terminate, () => {
+      frpcDesktopStore.refreshRunning();
+      loading.value = false;
+    })
+  );
 });
 
 onUnmounted(() => {
-  removeRouterListeners(ipcRouters.LAUNCH.launch);
-  removeRouterListeners(ipcRouters.LAUNCH.terminate);
+  if (uptimeTimer) {
+    clearInterval(uptimeTimer);
+    uptimeTimer = null;
+  }
+  listenerCleanups.splice(0).forEach(off => off());
 });
 </script>
 
@@ -110,7 +164,7 @@ onUnmounted(() => {
       >
         <div class="flex">
           <div
-            class="w-52 h-52 border-[#5A3DAA] text-[#5A3DAA] border-4 rounded-full flex justify-center items-center text-[100px] relative"
+            class="w-52 h-52 !border-4 border-[#5A3DAA] text-[#5A3DAA] rounded-full flex justify-center items-center text-[100px] relative"
           >
             <transition name="fade">
               <div
@@ -137,52 +191,83 @@ onUnmounted(() => {
             </div>
           </div>
           <div class="flex flex-col justify-center items-center">
-            <div class="flex flex-col justify-between pl-10 w-72 h-42">
+            <div class="flex flex-col gap-4 justify-between pl-10 w-96">
               <transition name="fade">
-                <div class="text-2xl font-bold text-center">
+                <div
+                  class="flex gap-1 justify-center text-2xl font-bold text-center"
+                >
                   <IconifyIconOffline
-                    v-if="frpcDesktopStore.frpcProcessRunning"
+                    v-if="frpcStatus === 'running'"
                     class="text-[#7EC050] inline-block relative top-1"
                     icon="check-circle-rounded"
+                  />
+                  <IconifyIconOffline
+                    v-else-if="frpcStatus === 'error'"
+                    class="text-[#E6A23C] inline-block relative top-1"
+                    icon="warningRounded"
                   />
                   <IconifyIconOffline
                     v-else
                     class="text-[#E47470] inline-block relative top-1"
                     icon="error"
                   />
-                  {{
-                    $t("home.status.frpcStatus", {
-                      status: frpcDesktopStore.frpcProcessRunning
-                        ? $t("home.status.running")
-                        : $t("home.status.disconnected")
-                    })
-                  }}
+                  <span>
+                    {{
+                      $t("home.status.frpcStatus", {
+                        status:
+                          frpcStatus === "running"
+                            ? $t("home.status.running")
+                            : frpcStatus === "error"
+                              ? $t("home.status.connectionError")
+                              : $t("home.status.disconnected")
+                      })
+                    }}
+                  </span>
                 </div>
               </transition>
               <div
-                class="justify-center mt-2 w-full text-sm text-center animate__animated animate__fadeIn"
-                v-if="frpcDesktopStore.frpcProcessRunning"
+                v-if="frpcStatus === 'error'"
+                class="justify-center w-full text-sm text-center animate__animated animate__fadeIn"
+              >
+                <el-text
+                  class="break-all line-clamp-2 text-primary"
+                  :title="frpcDesktopStore.frpcConnectionError"
+                >
+                  {{ frpcDesktopStore.frpcConnectionError }}
+                </el-text>
+                <div class="mt-1">
+                  <el-link
+                    type="primary"
+                    @click="$router.replace({ name: 'Logger' })"
+                  >
+                    {{ $t("home.button.viewLog") }}
+                  </el-link>
+                </div>
+              </div>
+              <div
+                v-else-if="frpcStatus === 'running'"
+                class="justify-center w-full text-sm text-center animate__animated animate__fadeIn"
               >
                 <span class="el-text--success">{{
                   $t("home.status.runningTime")
                 }}</span>
                 <span class="ml-1 font-bold text-primary">{{ uptime }}</span>
-              </div>
-              <div class="justify-center w-full text-center">
-                <el-link
-                  v-if="frpcDesktopStore.frpcProcessRunning"
-                  class="animate__animated animate__fadeIn"
-                  type="primary"
-                  @click="$router.replace({ name: 'Logger' })"
-                  >{{ $t("home.button.viewLog") }}</el-link
-                >
+
+                <div class="justify-center w-full text-center">
+                  <el-link
+                    class="animate__animated animate__fadeIn"
+                    type="primary"
+                    @click="$router.replace({ name: 'Logger' })"
+                    >{{ $t("home.button.viewLog") }}</el-link
+                  >
+                </div>
               </div>
 
               <el-button
                 class="mt-4"
                 type="primary"
-                @click="handleButtonClick"
                 :disabled="loading"
+                @click="handleButtonClick"
                 >{{
                   frpcDesktopStore.frpcProcessRunning
                     ? $t("home.button.stop")

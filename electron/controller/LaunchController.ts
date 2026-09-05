@@ -1,7 +1,7 @@
-import BaseController from "./BaseController";
+import Logger from "../core/Logger";
 import FrpcProcessService from "../service/FrpcProcessService";
 import ResponseUtils from "../utils/ResponseUtils";
-import Logger from "../core/Logger";
+import BaseController from "./BaseController";
 
 class LaunchController extends BaseController {
   private readonly _frpcProcessService: FrpcProcessService;
@@ -35,13 +35,18 @@ class LaunchController extends BaseController {
       });
   }
 
-  getStatus(req: ControllerParam) {
+  async getStatus(req: ControllerParam) {
+    await this._frpcProcessService.restoreExistingProcess();
     const running = this._frpcProcessService.isRunning();
+    const connectionError = running
+      ? this._frpcProcessService.frpcConnectionError
+      : null;
     req.event.reply(
       req.channel,
       ResponseUtils.success({
-        running: running,
-        lastStartTime: this._frpcProcessService.frpcLastStartTime
+        running,
+        lastStartTime: this._frpcProcessService.frpcLastStartTime,
+        connectionError
       })
     );
   }

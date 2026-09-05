@@ -1,8 +1,8 @@
-import { BrowserWindow, dialog } from "electron";
+import { dialog } from "electron";
 import fs from "fs";
 import moment from "moment";
-import BeanFactory from "../core/BeanFactory";
 import Logger from "../core/Logger";
+import DatabaseManager from "../database/DatabaseManager";
 import FrpcProcessService from "../service/FrpcProcessService";
 import ServerService from "../service/ServerService";
 import SystemService from "../service/SystemService";
@@ -14,16 +14,19 @@ class ConfigController extends BaseController {
   private readonly _serverService: ServerService;
   private readonly _systemService: SystemService;
   private readonly _frpcProcessService: FrpcProcessService;
+  private readonly _databaseManager: DatabaseManager;
 
   constructor(
     serverService: ServerService,
     systemService: SystemService,
-    frpcProcessService: FrpcProcessService
+    frpcProcessService: FrpcProcessService,
+    databaseManager: DatabaseManager
   ) {
     super();
     this._serverService = serverService;
     this._systemService = systemService;
     this._frpcProcessService = frpcProcessService;
+    this._databaseManager = databaseManager;
   }
 
   saveConfig(req: ControllerParam) {
@@ -69,10 +72,7 @@ class ConfigController extends BaseController {
     this._frpcProcessService
       .stopFrpcProcess()
       .then(() => {
-        fs.rmSync(PathUtils.getDataBaseStoragePath(), {
-          recursive: true,
-          force: true
-        });
+        this._databaseManager.resetData();
 
         fs.rmSync(PathUtils.getDownloadStoragePath(), {
           recursive: true,
@@ -132,43 +132,43 @@ class ConfigController extends BaseController {
   }
 
   importTomlConfig(req: ControllerParam) {
-    const win: BrowserWindow = BeanFactory.getBean("win");
-    dialog
-      .showOpenDialog(win, {
-        properties: ["openFile"],
-        filters: [{ name: "Frpc Toml ConfigFile", extensions: ["toml"] }]
-      })
-      .then(result => {
-        if (result.canceled) {
-          req.event.reply(
-            req.channel,
-            ResponseUtils.success({
-              canceled: true,
-              path: ""
-            })
-          );
-        } else {
-          req.event.reply(
-            req.channel,
-            ResponseUtils.success({
-              canceled: false,
-              path: ""
-            })
-          );
-        }
-      });
+    // const win: BrowserWindow = BeanFactory.getBean("win");
+    // dialog
+    //   .showOpenDialog(win, {
+    //     properties: ["openFile"],
+    //     filters: [{ name: "Frpc Toml ConfigFile", extensions: ["toml"] }]
+    //   })
+    //   .then(result => {
+    //     if (result.canceled) {
+    //       req.event.reply(
+    //         req.channel,
+    //         ResponseUtils.success({
+    //           canceled: true,
+    //           path: ""
+    //         })
+    //       );
+    //     } else {
+    //       req.event.reply(
+    //         req.channel,
+    //         ResponseUtils.success({
+    //           canceled: false,
+    //           path: ""
+    //         })
+    //       );
+    //     }
+    //   });
     // if (result.canceled) {
     // } else {
     // }
-    // this._serverService
-    //   .importTomlConfig()
-    //   .then(() => {
-    //     req.event.reply(req.channel, ResponseUtils.success());
-    //   })
-    //   .catch((err: Error) => {
-    //     Logger.error("ConfigController.importTomlConfig", err);
-    //     req.event.reply(req.channel, ResponseUtils.fail(err));
-    //   });
+    this._serverService
+      .importTomlConfig()
+      .then(data => {
+        req.event.reply(req.channel, ResponseUtils.success(data));
+      })
+      .catch((err: Error) => {
+        Logger.error("ConfigController.importTomlConfig", err);
+        req.event.reply(req.channel, ResponseUtils.fail(err));
+      });
   }
 
   getLanguage(req: ControllerParam) {

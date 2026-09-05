@@ -8,6 +8,7 @@ import SystemService from "./SystemService";
 class LogService {
   private readonly _systemService: SystemService;
   private readonly _logPath: string = PathUtils.getFrpcLogFilePath();
+  private readonly _appPath: string = PathUtils.getAppLogFilePath();
 
   constructor(systemService: SystemService) {
     this._systemService = systemService;
@@ -21,6 +22,21 @@ class LogService {
       }
       try {
         const data = fs.readFileSync(this._logPath, "utf-8");
+        resolve(data);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  async getAppLogContent() {
+    return new Promise((resolve, reject) => {
+      if (!fs.existsSync(this._appPath)) {
+        resolve("");
+        return;
+      }
+      try {
+        const data = fs.readFileSync(this._appPath, "utf-8");
         resolve(data);
       } catch (error) {
         reject(error);
@@ -48,10 +64,12 @@ class LogService {
     this._watcher = fs.watch(this._logPath, (eventType, filename) => {
       if (eventType === "change") {
         const win: BrowserWindow = BeanFactory.getBean("win");
-        win.webContents.send(
-          listenerParam.channel,
-          ResponseUtils.success(true)
-        );
+        if (win && !win.isDestroyed()) {
+          win.webContents.send(
+            listenerParam.channel,
+            ResponseUtils.success(true)
+          );
+        }
       }
     });
   }
@@ -60,6 +78,19 @@ class LogService {
     return new Promise<boolean>((resolve, reject) => {
       this._systemService
         .openLocalFile(this._logPath)
+        .then(result => {
+          resolve(result);
+        })
+        .catch(err => {
+          reject(err);
+        });
+    });
+  }
+
+  openAppLogFile(): Promise<boolean> {
+    return new Promise<boolean>((resolve, reject) => {
+      this._systemService
+        .openLocalFile(this._appPath)
         .then(result => {
           resolve(result);
         })

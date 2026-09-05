@@ -6,7 +6,6 @@ import renderer from "vite-plugin-electron-renderer";
 import { notBundle } from "vite-plugin-electron/plugin";
 import { resolve } from "path";
 
-
 import pkg from "./package.json";
 
 /** 路径查找 */
@@ -23,12 +22,37 @@ export default defineConfig(({ command }) => {
   const sourcemap = isServe || !!process.env.VSCODE_DEBUG;
 
   return {
+    build: {
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (
+              id.includes("/node_modules/element-plus/") ||
+              id.includes("/node_modules/@element-plus/") ||
+              id.includes("/node_modules/@popperjs/") ||
+              id.includes("/node_modules/async-validator/")
+            ) {
+              return "vendor-element-plus";
+            }
+            if (
+              id.includes("/node_modules/vue/") ||
+              id.includes("/node_modules/@vue/") ||
+              id.includes("/node_modules/pinia/") ||
+              id.includes("/node_modules/vue-i18n/") ||
+              id.includes("/node_modules/vue-router/")
+            ) {
+              return "vendor-vue";
+            }
+          }
+        }
+      }
+    },
     css: {
       preprocessorOptions: {
         scss: {
           api: "modern-compiler"
         }
-      }
+      } as any
     },
     plugins: [
       vue(),

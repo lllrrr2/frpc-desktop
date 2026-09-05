@@ -33,6 +33,7 @@ export default {
     status: {
       running: "已启动",
       disconnected: "已断开",
+      connectionError: "连接失败",
       runningTime: "已运行",
       frpcStatus: "Frpc {status}"
     },
@@ -51,6 +52,11 @@ export default {
         title: "提示",
         message: "请先前往设置页面，选择版本后再启动",
         confirm: "去设置"
+      },
+      webServerPortInUse: {
+        title: "提示",
+        message: "Web界面端口已被占用，请前往设置页面更换 Web界面端口后再启动",
+        confirm: "去设置"
       }
     }
   },
@@ -61,9 +67,17 @@ export default {
     button: {
       import: "导入"
     },
+    mirror: {
+      placeholder: "下载代理"
+    },
+    viewMode: {
+      card: "卡片",
+      list: "列表"
+    },
     message: {
       importSuccess: "导入成功",
-      deleteSuccess: "删除成功"
+      deleteSuccess: "删除成功",
+      copyDownloadLinkSuccess: "复制下载链接成功"
     },
     alert: {
       deleteConfirm: {
@@ -81,10 +95,13 @@ export default {
       }
     },
     version: {
+      size: "大小",
       downloadCount: "下载数：",
       publishTime: "发布时间：",
       downloaded: "已下载",
+      notDownloaded: "未下载",
       download: "下载",
+      downloadLink: "下载链接",
       noVersions: "暂无可用版本"
     }
   },
@@ -96,6 +113,16 @@ export default {
     content: {
       empty: "暂无日志"
     },
+    tab: {
+      appLog: "应用日志",
+      frpcLog: "连接日志"
+    },
+    search: {
+      placeholder: "搜索日志内容..."
+    },
+    loading: {
+      text: "加载中..."
+    },
     autoRefresh: "自动刷新",
     autoRefreshTime: "{time}秒 后自动刷新"
   },
@@ -103,7 +130,7 @@ export default {
     button: {
       doc: "使用教程",
       donate: "捐赠名单",
-      github: "仓库地址",
+      github: "GitHub",
       issues: "反馈问题"
     },
     features: {
@@ -337,6 +364,7 @@ export default {
     close: "关闭",
     save: "保存",
     mode: "模式",
+    status: "状态",
     selectMode: "请选择{mode}模式",
     operation: "操作",
     select: "选择",
@@ -351,6 +379,12 @@ export default {
     visitorsProvider: "提供者",
     visitorsName: "访问者名称",
     noProxy: "暂无代理",
+    refresh: "刷新代理列表",
+    search: "搜索名称/类型/IP/端口/域名",
+    viewMode: {
+      card: "卡片",
+      list: "列表"
+    },
     modifyTitle: "编辑代理",
     createTitle: "添加代理",
     message: {
@@ -479,6 +513,13 @@ export default {
           label: "提供者代理名称",
           requireMessage: "请输入提供者代理名称",
           placeholder: "提供者代理名称"
+        },
+        serverUser: {
+          label: "服务端用户",
+          requireMessage: "请输入服务端用户",
+          placeholder: "服务端用户",
+          description:
+            "访问其他用户创建的提供者代理时填写；留空则默认访问当前服务端用户的代理。"
         },
         keepTunnelOpen: {
           label: "保持隧道开启",

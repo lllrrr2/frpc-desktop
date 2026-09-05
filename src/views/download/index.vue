@@ -2,8 +2,8 @@
 import Breadcrumb from "@/layout/compoenets/Breadcrumb.vue";
 
 import { useFrpcDesktopStore } from "@/store/frpcDesktop";
-import { on, removeRouterListeners, send } from "@/utils/ipcUtils";
-import { useDebounceFn } from "@vueuse/core";
+import { on, send } from "@/utils/ipcUtils";
+import { useClipboard, useDebounceFn } from "@vueuse/core";
 import { ElMessage, ElMessageBox } from "element-plus";
 import moment from "moment";
 import { defineComponent, onMounted, onUnmounted, ref } from "vue";
@@ -20,14 +20,29 @@ const versions = ref<Array<FrpcVersion>>([]);
 const loading = ref(1);
 const downloadPercentage = ref(0);
 const downloading = ref<Map<number, number>>(new Map<number, number>());
-const currMirror = ref("github");
+const viewMode = ref<"card" | "list">("card");
+const currMirror = ref("gh-jwinks");
 const mirrors = ref<Array<GitHubMirror>>([
   {
     id: "github",
-    name: "github"
+    name: "GitHub"
+  },
+  {
+    id: "gh-jwinks",
+    name: "Jwinks",
+    prefix: "https://gh.jwinks.com/file/"
   }
 ]);
 const frpcDesktopStore = useFrpcDesktopStore();
+const listenerCleanups: Array<() => void> = [];
+
+const getDownloadUrl = (version: FrpcVersion) => {
+  const mirror = mirrors.value.find(item => item.id === currMirror.value);
+  if (!mirror?.prefix) {
+    return version.browserDownloadUrl;
+  }
+  return `${mirror.prefix}${version.browserDownloadUrl}`;
+};
 
 /**
  * 获取版本
@@ -42,9 +57,19 @@ const handleLoadAllVersions = () => {
  */
 const handleDownload = useDebounceFn((version: FrpcVersion) => {
   send(ipcRouters.VERSION.downloadVersion, {
-    githubReleaseId: version.githubReleaseId
+    githubReleaseId: version.githubReleaseId,
+    mirrorId: currMirror.value
   });
   downloading.value.set(version.githubReleaseId, 0);
+}, 300);
+
+const handleCopyDownloadLink = useDebounceFn((version: FrpcVersion) => {
+  const { copy, copied } = useClipboard();
+  copy(getDownloadUrl(version));
+  ElMessage({
+    type: "success",
+    message: t("download.message.copyDownloadLinkSuccess")
+  });
 }, 300);
 
 /**
@@ -68,90 +93,102 @@ const handleDeleteVersion = useDebounceFn((version: FrpcVersion) => {
   });
 }, 300);
 
-const handleMirrorChange = () => {
-  handleLoadAllVersions();
+const isVersionDownloading = (version: FrpcVersion) => {
+  return downloading.value.has(version.githubReleaseId);
+};
+
+const getDownloadProgress = (version: FrpcVersion) => {
+  return downloading.value.get(version.githubReleaseId) ?? 0;
 };
 
 onMounted(() => {
   handleLoadAllVersions();
 
-  on(ipcRouters.VERSION.getVersions, data => {
-    versions.value = data.map(m => {
-      m.githubCreatedAt = moment(m.githubCreatedAt).format("YYYY-MM-DD");
-      return m as FrpcVersion;
-    }) as Array<FrpcVersion>;
-    loading.value--;
-  });
+  listenerCleanups.push(
+    on(ipcRouters.VERSION.getVersions, data => {
+      versions.value = data.map(m => {
+        m.githubCreatedAt = moment(m.githubCreatedAt).format("YYYY-MM-DD");
+        return m as FrpcVersion;
+      }) as Array<FrpcVersion>;
+      loading.value--;
+    })
+  );
 
-  on(ipcRouters.VERSION.downloadVersion, data => {
-    const { githubReleaseId, completed, percent } = data;
-    if (completed) {
-      downloading.value.delete(githubReleaseId);
-      const version: FrpcVersion | undefined = versions.value.find(
-        f => f.githubReleaseId === githubReleaseId
-      );
-      if (version) {
-        version.downloaded = true;
-      }
-    } else {
-      downloading.value.set(
-        githubReleaseId,
-        Number(Number(percent * 100).toFixed(2))
-      );
-    }
-    frpcDesktopStore.refreshDownloadedVersion();
-  });
-
-  on(ipcRouters.VERSION.deleteDownloadedVersion, () => {
-    loading.value++;
-    ElMessage({
-      type: "success",
-      message: t("download.message.deleteSuccess")
-    });
-    handleLoadAllVersions();
-    frpcDesktopStore.refreshDownloadedVersion();
-  });
-
-  on(
-    ipcRouters.VERSION.importLocalFrpcVersion,
-    data => {
-      const { canceled } = data;
-      if (!canceled) {
-        loading.value++;
-        ElMessage({
-          type: "success",
-          message: t("download.message.importSuccess")
-        });
-        handleLoadAllVersions();
-        frpcDesktopStore.refreshDownloadedVersion();
-      }
-    },
-    (bizCode: string, message: string) => {
-      if (bizCode === "B1002") {
-        ElMessageBox.alert(
-          t("download.alert.importFailed.versionExists"),
-          t("download.alert.importFailed.title")
+  listenerCleanups.push(
+    on(ipcRouters.VERSION.downloadVersion, data => {
+      const { githubReleaseId, completed, percent } = data;
+      if (completed) {
+        downloading.value.delete(githubReleaseId);
+        const version: FrpcVersion | undefined = versions.value.find(
+          f => f.githubReleaseId === githubReleaseId
+        );
+        if (version) {
+          version.downloaded = true;
+        }
+      } else {
+        downloading.value.set(
+          githubReleaseId,
+          Number(Number(percent * 100).toFixed(2))
         );
       }
-      if (bizCode === "B1003") {
-        ElMessageBox.alert(
-          t("download.alert.importFailed.architectureNotMatch"),
-          t("download.alert.importFailed.title")
-        );
+      frpcDesktopStore.refreshDownloadedVersion();
+    })
+  );
+
+  listenerCleanups.push(
+    on(ipcRouters.VERSION.deleteDownloadedVersion, () => {
+      loading.value++;
+      ElMessage({
+        type: "success",
+        message: t("download.message.deleteSuccess")
+      });
+      handleLoadAllVersions();
+      frpcDesktopStore.refreshDownloadedVersion();
+    })
+  );
+
+  listenerCleanups.push(
+    on(
+      ipcRouters.VERSION.importLocalFrpcVersion,
+      data => {
+        const { canceled } = data;
+        if (!canceled) {
+          loading.value++;
+          ElMessage({
+            type: "success",
+            message: t("download.message.importSuccess")
+          });
+          handleLoadAllVersions();
+          frpcDesktopStore.refreshDownloadedVersion();
+        }
+      },
+      (bizCode: string, message: string) => {
+        if (bizCode === "B1002") {
+          ElMessageBox.alert(
+            t("download.alert.importFailed.versionExists"),
+            t("download.alert.importFailed.title")
+          );
+        }
+        if (bizCode === "B1003") {
+          ElMessageBox.alert(
+            t("download.alert.importFailed.architectureNotMatch"),
+            t("download.alert.importFailed.title")
+          );
+        }
+        if (bizCode === "B1004") {
+          ElMessageBox.alert(
+            t("download.alert.importFailed.unrecognizedFile"),
+            t("download.alert.importFailed.title")
+          );
+        }
       }
-      if (bizCode === "B1004") {
-        ElMessageBox.alert(
-          t("download.alert.importFailed.unrecognizedFile"),
-          t("download.alert.importFailed.title")
-        );
-      }
-    }
+    )
   );
 });
 
 const handleImportFrp = () => {
   ElMessageBox.alert(
-    '仅支持导入版本 > <span class="font-bold text-primary">v0.52.0</span> <= <span class="font-bold text-primary">v0.64.0</span><div class="font-bold text-primary">导入文件不要解压！！！',
+    '仅支持导入版本 > <span class="font-bold text-primary">v0.52.0</span> <= <span class="font-bold text-primary">v0.68.0</span><div class="font-bold text-primary">导入文件不要解压！！！',
     "导入提示",
     {
       confirmButtonText: "知道了",
@@ -163,16 +200,38 @@ const handleImportFrp = () => {
 };
 
 onUnmounted(() => {
-  removeRouterListeners(ipcRouters.VERSION.deleteDownloadedVersion);
-  removeRouterListeners(ipcRouters.VERSION.downloadVersion);
-  removeRouterListeners(ipcRouters.VERSION.getVersions);
-  removeRouterListeners(ipcRouters.VERSION.importLocalFrpcVersion);
+  listenerCleanups.splice(0).forEach(off => off());
 });
 </script>
 <template>
   <div class="main">
     <breadcrumb>
-      <div class="flex">
+      <div class="flex flex-wrap gap-2 items-center justify-end">
+        <el-select
+          v-model="currMirror"
+          class="download-mirror-select"
+          :placeholder="t('download.mirror.placeholder')"
+        >
+          <template #prefix>
+            <IconifyIconOffline icon="download" />
+          </template>
+          <el-option
+            v-for="mirror in mirrors"
+            :key="mirror.id"
+            :label="mirror.name"
+            :value="mirror.id"
+          />
+        </el-select>
+        <el-radio-group v-model="viewMode" class="mr-2">
+          <el-radio-button value="card">
+            <IconifyIconOffline class="mr-1" icon="dashboard" />
+            {{ t("download.viewMode.card") }}
+          </el-radio-button>
+          <el-radio-button value="list">
+            <IconifyIconOffline class="mr-1" icon="table-rows" />
+            {{ t("download.viewMode.list") }}
+          </el-radio-button>
+        </el-radio-group>
         <el-button type="primary" @click="handleImportFrp">
           <template #icon>
             <IconifyIconOffline icon="unarchive" />
@@ -181,10 +240,10 @@ onUnmounted(() => {
         </el-button>
       </div>
     </breadcrumb>
-    <div class="pr-2 app-container-breadcrumb" v-loading="loading > 0">
+    <div v-loading="loading > 0" class="pr-2 app-container-breadcrumb">
       <div class="w-full">
         <template v-if="versions && versions.length > 0">
-          <el-row :gutter="15">
+          <el-row v-if="viewMode === 'card'" :gutter="15">
             <el-col
               v-for="version in versions"
               :key="version.githubAssetId"
@@ -245,8 +304,8 @@ onUnmounted(() => {
 
                   <template v-else>
                     <div
-                      class="w-32"
                       v-if="downloading.has(version.githubReleaseId)"
+                      class="w-32"
                     >
                       <el-progress
                         :percentage="downloading.get(version.githubReleaseId)"
@@ -264,11 +323,118 @@ onUnmounted(() => {
                       </template>
                       {{ t("download.version.download") }}
                     </el-button>
+
+                    <el-button
+                      type="text"
+                      size="small"
+                      @click="handleCopyDownloadLink(version)"
+                    >
+                      <template #icon>
+                        <IconifyIconOffline icon="link" /> </template
+                      >{{ t("download.version.downloadLink") }}
+                    </el-button>
                   </template>
                 </div>
               </div>
             </el-col>
           </el-row>
+          <el-table
+            v-else
+            :data="versions"
+            border
+            class="download-list-table"
+            stripe
+          >
+            <el-table-column
+              :label="t('config.form.frpcVerson.label')"
+              min-width="180"
+              prop="name"
+              show-overflow-tooltip
+            >
+              <template #default="scope">
+                <span class="font-bold text-primary">{{ scope.row.name }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('download.version.size')"
+              width="110"
+              prop="size"
+            />
+            <el-table-column
+              :label="t('download.version.downloadCount')"
+              width="120"
+              prop="versionDownloadCount"
+            />
+            <el-table-column
+              :label="t('download.version.publishTime')"
+              width="140"
+              prop="githubCreatedAt"
+            />
+            <el-table-column :label="t('common.status')" width="150">
+              <template #default="scope">
+                <el-progress
+                  v-if="isVersionDownloading(scope.row)"
+                  :percentage="getDownloadProgress(scope.row)"
+                  :text-inside="false"
+                />
+                <el-tag v-else-if="scope.row.downloaded" type="success">
+                  {{ t("download.version.downloaded") }}
+                </el-tag>
+                <el-tag v-else type="info">
+                  {{ t("download.version.notDownloaded") }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column
+              :label="t('common.operation')"
+              align="right"
+              fixed="right"
+              width="210"
+            >
+              <template #default="scope">
+                <div class="download-table-actions">
+                  <template v-if="scope.row.downloaded">
+                    <el-button
+                      link
+                      type="danger"
+                      size="small"
+                      @click="handleDeleteVersion(scope.row)"
+                    >
+                      <template #icon>
+                        <IconifyIconOffline icon="delete-rounded" />
+                      </template>
+                      {{ t("common.delete") }}
+                    </el-button>
+                  </template>
+                  <template v-else>
+                    <el-button
+                      v-if="!isVersionDownloading(scope.row)"
+                      link
+                      type="primary"
+                      size="small"
+                      @click="handleDownload(scope.row)"
+                    >
+                      <template #icon>
+                        <IconifyIconOffline icon="download" />
+                      </template>
+                      {{ t("download.version.download") }}
+                    </el-button>
+                    <el-button
+                      link
+                      type="primary"
+                      size="small"
+                      @click="handleCopyDownloadLink(scope.row)"
+                    >
+                      <template #icon>
+                        <IconifyIconOffline icon="link" />
+                      </template>
+                      {{ t("download.version.downloadLink") }}
+                    </el-button>
+                  </template>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
         </template>
         <div
           v-else
@@ -280,3 +446,21 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
+
+<style lang="scss" scoped>
+.download-table-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  white-space: nowrap;
+
+  :deep(.el-button) {
+    margin-left: 0;
+  }
+}
+
+.download-mirror-select {
+  width: 160px;
+}
+</style>

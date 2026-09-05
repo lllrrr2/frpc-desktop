@@ -26,6 +26,11 @@ class ProxyService {
     return proxy2;
   }
 
+  async updateProxyStatus(id: string, status: number) {
+    await this._proxyDao.updateProxyStatus(id, status);
+    await this._frpcProcessService.reloadFrpcProcess();
+  }
+
   async deleteProxy(proxyId: string) {
     await this._proxyDao.deleteById(proxyId);
     await this._frpcProcessService.reloadFrpcProcess();
@@ -55,8 +60,8 @@ class ProxyService {
                 const cols = m.split(" ").filter(f => f != "");
                 const local = cols[1];
                 const s = local.lastIndexOf(":");
-                let localIP = local.slice(0, s);
-                let localPort = local.slice(s - local.length + 1);
+                const localIP = local.slice(0, s);
+                const localPort = local.slice(s - local.length + 1);
                 const singe: LocalPort = {
                   protocol: cols[0],
                   ip: localIP,
@@ -78,8 +83,8 @@ class ProxyService {
                 const cols = m.split(" ").filter(f => f != "");
                 const local = cols[3];
                 const s = local.lastIndexOf(".");
-                let localIP = local.slice(0, s);
-                let localPort = local.slice(s - local.length + 1);
+                const localIP = local.slice(0, s);
+                const localPort = local.slice(s - local.length + 1);
                 const singe: LocalPort = {
                   protocol: cols[0],
                   ip: localIP,
@@ -101,8 +106,8 @@ class ProxyService {
                 const cols = m.split(" ").filter(f => f != "");
                 const local = cols[3];
                 const s = local.lastIndexOf(":");
-                let localIP = local.slice(0, s);
-                let localPort = local.slice(s - local.length + 1);
+                const localIP = local.slice(0, s);
+                const localPort = local.slice(s - local.length + 1);
                 const singe: LocalPort = {
                   protocol: cols[0],
                   ip: localIP,

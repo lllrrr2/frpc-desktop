@@ -1,8 +1,4 @@
-import {
-  createRouter,
-  createWebHashHistory,
-  RouteRecordRaw
-} from "vue-router";
+import { createRouter, createWebHashHistory, RouteRecordRaw } from "vue-router";
 
 const Layout = () => import("@/layout/index.vue");
 
@@ -29,7 +25,7 @@ const routes: RouteRecordRaw[] = [
         meta: {
           title: "router.proxy.title",
           icon: "cloud",
-          keepAlive: false
+          keepAlive: true
         },
         component: () => import("@/views/proxy/index.vue")
       },
@@ -49,7 +45,7 @@ const routes: RouteRecordRaw[] = [
         meta: {
           title: "router.config.title",
           icon: "settings",
-          keepAlive: false
+          keepAlive: true
         },
         component: () => import("@/views/config/index.vue")
       },

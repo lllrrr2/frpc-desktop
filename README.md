@@ -1,6 +1,7 @@
 <a name="readme-top"></a>
 
 <!-- PROJECT SHIELDS -->
+[![Downloads][downloads-shield]][downloads-url]
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
@@ -21,11 +22,16 @@
     Support all frp versions / Auto-start / Visual configuration / Free and open source
   </p>
 
-  <p><a href="https://jwinks.com/p/frp/#frp%E6%98%AF%E4%BB%80%E4%B9%88">Tutorial</a>  <a href="README.zh_CN.md">中文</a></p>
+  <p>🎊 <strong>10,000+ Downloads Milestone!</strong> Thank you for your support!</p>
+
+  <p><a href="https://jwinks.com/p/frp/">📖 Docs</a> &nbsp; <a href="README.zh_CN.md">中文</a></p>
 
 <a href="https://trendshift.io/repositories/12489" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12489" alt="luckjiawei%2Ffrpc-desktop | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
 <a href="https://hellogithub.com/repository/b0dc116e9f2e4b8188da5a6d3e1bd8a4" target="_blank"><img src="https://abroad.hellogithub.com/v1/widgets/recommend.svg?rid=b0dc116e9f2e4b8188da5a6d3e1bd8a4&claim_uid=8ZMOhz30mGJAHpa" alt="Featured｜HelloGitHub" style="width: 250px; height: 54px;" width="250" height="54" /></a>
 </div>
+
+> 💡 If you prefer a **web UI**, try [Podux](https://github.com/luckjiawei/podux) —
+> the browser-based frpc manager from the same author.
 
 ## TODO
 
@@ -42,8 +48,13 @@
 - [x] Support importing and recognizing frpc.toml
 - [x] TCP and UDP protocols support batch ports
 - [x] Support multiple languages
+- [x] Fast proxy search with card/list pagination
 
 ## Common Issues
+
+### macOS universal build fails on better-sqlite3 prebuilds
+
+Keep the `mac.x64ArchFiles` rule in `electron-builder.json5` when building with electron-builder 26. It allows the identical `darwin-x64.node` and `darwin-arm64.node` prebuilds shipped by better-sqlite3 to remain in the universal app; better-sqlite3 selects the matching binary at runtime. Run `npm run build:electron:mac` on macOS to rebuild.
 
 ### Mac shows app is damaged
 
@@ -51,6 +62,8 @@ Run command: `sudo xattr -cr Frpc-Desktop.app`
 
 ## Milestones
 
+- 2026-05-21: Released v1.2.6 Added download proxy selection
+- 2026-03-26: Released v1.2.5 Fixed known bugs
 - 2025-09-10: Released v1.2.3 Fixed known bugs, Supports proxy protocol, Optimize performance
 - 2025-04-22: Released v1.2.2 Fixed known bugs, Supports HTTP Locations
 - 2025-03-25: Released v1.2.1 Fixed known bugs, Supports english
@@ -104,56 +117,6 @@ No advertisements allowed!!!
 
 👉👉👉[Click to donate](https://jwinks.com/donate/)👈👈👈
 
-**Donation List**
-
-| 🕰 Time    | 📡 Platform | 🤲 Donor          | 💰 Amount | ✉️ Message                                             |
-|------------|-------------|-------------------|-----------|--------------------------------------------------------|
-| 2024-08-06 | WeChat      | San Mu            | ¥1        | None                                                   |
-| 2024-08-25 | WeChat      | Late Wind         | ¥1        | None                                                   |
-| 2024-08-27 | WeChat      | x                 | ¥1        | None                                                   |
-| 2024-10-09 | WeChat      | Liberation        | ¥20       | None                                                   |
-| 2024-10-09 | WeChat      | KMDN              | ¥20       | None                                                   |
-| 2024-10-14 | WeChat      | 121               | ¥5        | None                                                   |
-| 2024-10-14 | WeChat      | Different         | ¥10       | Thanks for open source                                 |
-| 2024-10-16 | WeChat      | . . .             | ¥50       | Thanks for open source frp software                    |
-| 2024-11-2  | WeChat      | gesoft            | ¥10       | Keep going                                             |
-| 2024-11-7  | WeChat      | *Jin              | ¥10       | Thanks, visible and obtainable, saves effort           |
-| 2024-11-8  | WeChat      | **Chuang          | ¥10       | None                                                   |
-| 2024-11-20 | WeChat      | Yi Dong           | ¥20       | Buy you a coffee                                       |
-| 2024-11-20 | WeChat      | KEVINSKH          | ¥10       | Thanks for developing convenient graphical interface👍 |
-| 2024-11-26 | WeChat      |                   | ¥3        | None                                                   |
-| 2024-11-26 | WeChat      | Kaori             | ¥1        | Thanks, would be better with web control interface     |
-| 2024-12-03 | WeChat      | 17¥               | ¥20       | Thanks, very convenient software                       |
-| 2024-12-03 | WeChat      | Cr@k3r            | ¥5        | Thanks for your work                                   |
-| 2024-12-09 | WeChat      | Vince             | ¥20       | Support Chinese developers!                            |
-| 2024-12-11 | Alipay      | **Meng            | ¥20       | Keep going                                             |
-| 2024-12-11 | Alipay      | *Shi              | ¥20       | None                                                   |
-| 2024-12-16 | WeChat      | Iron Man Gentle   | ¥1        | Support Chinese developers                             |
-| 2024-12-16 | WeChat      | Yasuo🌪️          | ¥1        | None                                                   |
-| 2024-12-17 | WeChat      | ppp789            | ¥1.6      | None                                                   |
-| 2024-12-17 | Alipay      | *Tao              | ¥10       | None                                                   |
-| 2024-12-18 | WeChat      | Jue Yuan          | ¥6.66     | Open source is not easy                                |
-| 2024-12-19 | WeChat      | Official Reminder | ¥1        | None                                                   |
-| 2024-12-19 | WeChat      | Mu~Yi             | ¥6.66     | Keep going                                             |
-| 2025-01-06 | WeChat      | Ru Shi            | ¥2        | Support open source                                    |
-| 2025-01-13 | WeChat      | David Veith       | ¥18.88    | Open source is priceless, XOXO                         |
-| 2025-01-14 | WeChat      | Xterminal SSH     | ¥199      | Xterminal SSH client comes to support                  |
-| 2025-02-19 | Alipay      | **Yang            | ¥3        | None                                                   |
-| 2025-03-03 | WeChat      |                   | ¥6.66     |                                                        |
-| 2025-03-23 | WeChat      | AFC               | ¥3        |                                                        |
-| 2025-03-28 | Alipay      | **Fei             | ¥2        |                                                        |
-| 2025-04-04 | WeChat      | *                 | ¥18.88    | Thanks for open source                                 |
-| 2025-04-07 | Alipay      | **Tian            | ¥32       |                                                        |
-| 2025-05-13 | WeChat      | San Mu            | ¥0.1      |                                                        |
-| 2025-05-23 | WeChat      | Dream mud volume  | ¥8.88     |                                                        |
-| 2025-06-26 | WeChat      | Beidou🛰          | ¥6.66     |                                                        |
-| 2025-07-11 | WeChat      |                   | ¥1        |                                                        |
-| 2025-07-13 | WeChat      | Kyle              | ¥1.88     |                                                        |
-| 2025-07-14 | WeChat      | Rabbit God        | ¥8.88     |                                                        |
-| 2025-07-31 | Alipay      | **Jun             | ¥8.88     |                                                        |
-| 2025-08-18 | Alipay      | **Meng            | ¥5        |                                                        |
-| 2025-08-26 | Wechat      | *                 | ¥1.66     |                                                        |
-
 
 
 ## Contributors
@@ -171,6 +134,10 @@ No advertisements allowed!!!
 [![Star History Chart](https://api.star-history.com/svg?repos=luckjiawei/frpc-desktop&type=Date)](https://www.star-history.com/#luckjiawei/frpc-desktop&Date)
 
 <!-- MARKDOWN LINKS & IMAGES -->
+
+[downloads-shield]: https://img.shields.io/github/downloads/luckjiawei/frpc-desktop/total.svg?style=for-the-badge
+
+[downloads-url]: https://github.com/luckjiawei/frpc-desktop/releases
 
 [forks-shield]: https://img.shields.io/github/forks/luckjiawei/frpc-desktop.svg?style=for-the-badge
 

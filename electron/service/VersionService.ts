@@ -1,20 +1,22 @@
+import { BrowserWindow } from "electron";
+import fs from "fs";
+import path from "path";
+import { BusinessError, ResponseCode } from "../core/BusinessError";
+import GlobalConstant from "../core/GlobalConstant";
+import Logger from "../core/Logger";
 import VersionRepository from "../repository/VersionRepository";
+import FileUtils from "../utils/FileUtils";
+import PathUtils from "../utils/PathUtils";
+import SecureUtils from "../utils/SecureUtils";
 import BaseService from "./BaseService";
 import GitHubService from "./GitHubService";
-import frpReleasesJson from "../json/frp-releases.json";
-import { download } from "electron-dl";
-import { BrowserWindow } from "electron";
-import GlobalConstant from "../core/GlobalConstant";
-import path from "path";
-import fs from "fs";
-import SecureUtils from "../utils/SecureUtils";
-import PathUtils from "../utils/PathUtils";
-import FileUtils from "../utils/FileUtils";
-import frpChecksums from "../json/frp_all_sha256_checksums.json";
 import SystemService from "./SystemService";
-import { BusinessError, ResponseCode } from "../core/BusinessError";
 
 class VersionService extends BaseService<FrpcVersion> {
+  private static readonly GITHUB_DOWNLOAD_MIRRORS: Record<string, string> = {
+    "gh-jwinks": "https://gh.jwinks.com/file/"
+  };
+
   private readonly _versionDao: VersionRepository;
   private readonly _systemService: SystemService;
   private readonly _gitHubService: GitHubService;
@@ -34,15 +36,20 @@ class VersionService extends BaseService<FrpcVersion> {
     this._currFrpArch = GlobalConstant.FRP_ARCH_VERSION_MAPPING[nodeVersion];
   }
 
-  downloadFrpVersion(githubReleaseId: number, onProgress: Function) {
-    return new Promise((resolve, reject) => {
+  async downloadFrpVersion(
+    githubReleaseId: number,
+    onProgress: Function,
+    mirrorId?: string
+  ) {
+    return new Promise(async (resolve, reject) => {
       const version = this._versions.find(
         f => f.githubReleaseId === githubReleaseId
       );
       if (!version) {
         reject(new Error("version not found"));
+        return;
       }
-      const url = version.browserDownloadUrl;
+      const url = this.getDownloadUrl(version.browserDownloadUrl, mirrorId);
       const downloadedFilePath = path.join(
         PathUtils.getDownloadStoragePath(),
         `${version.assetName}`
@@ -56,7 +63,15 @@ class VersionService extends BaseService<FrpcVersion> {
       if (fs.existsSync(versionFilePath)) {
         fs.rmSync(versionFilePath, { recursive: true, force: true });
       }
-      // const targetPath = path.resolve();
+
+      Logger.info(
+        `VersionService.downloadFrpVersion`,
+        `Downloading version=${version.name}, asset=${version.assetName}, url=${url}`
+      );
+
+      // 动态导入 electron-dl (ESM 模块)
+      const { download } = await import("electron-dl");
+
       download(BrowserWindow.getFocusedWindow(), url, {
         filename: `${version.assetName}`,
         directory: PathUtils.getDownloadStoragePath(),
@@ -64,11 +79,16 @@ class VersionService extends BaseService<FrpcVersion> {
           onProgress(progress);
         },
         onCompleted: () => {
+          Logger.info(
+            `VersionService.downloadFrpVersion`,
+            `Download completed: ${version.assetName}, starting decompression`
+          );
           this.decompressFrp(version, downloadedFilePath)
             .then(data => {
               resolve(data);
             })
             .catch(err => {
+              Logger.error(`VersionService.downloadFrpVersion`, err);
               reject(err);
             });
         }
@@ -80,13 +100,23 @@ class VersionService extends BaseService<FrpcVersion> {
     if (!githubReleaseId) {
       return;
     }
-    const version = await this._versionDao.findByGithubReleaseId(
-      githubReleaseId
-    );
-    if (this.frpcVersionExists(version)) {
-      fs.rmSync(version.localPath, { recursive: true, force: true });
-      await this._versionDao.deleteById(version._id);
+    const version =
+      await this._versionDao.findByGithubReleaseId(githubReleaseId);
+    if (!version) {
+      return;
     }
+    Logger.info(
+      `VersionService.deleteFrpVersion`,
+      `Deleting version=${version.name}, path=${version.localPath}`
+    );
+    if (version.localPath && fs.existsSync(version.localPath)) {
+      fs.rmSync(version.localPath, { recursive: true, force: true });
+    }
+    await this._versionDao.deleteById(version._id);
+    Logger.info(
+      `VersionService.deleteFrpVersion`,
+      `Version deleted: ${version.name}`
+    );
   }
 
   async getFrpVersionsByGitHub(): Promise<Array<FrpcVersion>> {
@@ -105,10 +135,26 @@ class VersionService extends BaseService<FrpcVersion> {
   }
 
   async getFrpVersionByLocalJson(): Promise<Array<FrpcVersion>> {
-    return this.githubRelease2FrpcVersion(frpReleasesJson);
+    const { default: releases } = await import("../json/frp-releases.json");
+    const versions = await this.githubRelease2FrpcVersion(
+      releases as unknown as Array<GithubRelease>
+    );
+    this._versions = versions;
+    return versions;
   }
 
   getFrpVersion() {}
+
+  private getDownloadUrl(originalUrl: string, mirrorId?: string) {
+    if (!mirrorId || mirrorId === "github") {
+      return originalUrl;
+    }
+    const mirrorPrefix = VersionService.GITHUB_DOWNLOAD_MIRRORS[mirrorId];
+    if (!mirrorPrefix) {
+      return originalUrl;
+    }
+    return `${mirrorPrefix}${originalUrl}`;
+  }
 
   private findCurrentArchitectureAsset(assets: Array<GithubAsset>) {
     return assets.find((af: GithubAsset) => {
@@ -120,15 +166,17 @@ class VersionService extends BaseService<FrpcVersion> {
     releases: Array<GithubRelease>
   ): Promise<Array<FrpcVersion>> {
     const allVersions = await this._versionDao.findAll();
-    return releases
+    const filtered = releases
       .filter(release => {
         // only support toml version.
         return release.id > 124395282;
       })
       .filter(release => {
         return this.findCurrentArchitectureAsset(release.assets);
-      })
-      .map(m => {
+      });
+
+    return Promise.all(
+      filtered.map(async (m: GithubRelease) => {
         const asset = this.findCurrentArchitectureAsset(m.assets);
         const download_count = m.assets.reduce(
           (sum, item) => sum + item.download_count,
@@ -136,6 +184,17 @@ class VersionService extends BaseService<FrpcVersion> {
         );
 
         const currVersion = allVersions.find(ff => ff.githubReleaseId === m.id);
+        const binaryExists = this.frpcVersionExists(currVersion);
+
+        // If DB record exists but binary was deleted (e.g., by antivirus), clean up stale record
+        if (currVersion && !binaryExists) {
+          Logger.warn(
+            `VersionService.githubRelease2FrpcVersion`,
+            `Binary missing for version=${m.name}, removing stale DB record`
+          );
+          await this._versionDao.deleteById(currVersion._id);
+        }
+
         const v: FrpcVersion = {
           _id: "",
           githubReleaseId: m.id,
@@ -146,30 +205,42 @@ class VersionService extends BaseService<FrpcVersion> {
           versionDownloadCount: download_count,
           assetDownloadCount: asset.download_count,
           browserDownloadUrl: asset.browser_download_url,
-          downloaded: this.frpcVersionExists(currVersion),
-          localPath: currVersion && currVersion.localPath,
+          downloaded: binaryExists,
+          localPath: binaryExists ? currVersion.localPath : null,
           size: FileUtils.formatBytes(asset.size)
         };
         return v;
-      });
+      })
+    );
   }
 
   private frpcVersionExists(version: FrpcVersion): boolean {
-    // const version = await this._versionDao.findByGithubReleaseId(
-    //   githubReleaseId
-    // );
-
-    if (version) {
-      return fs.existsSync(version.localPath);
+    if (version && version.localPath) {
+      const filename =
+        process.platform === "win32"
+          ? PathUtils.getWinFrpFilename()
+          : PathUtils.getFrpcFilename();
+      return fs.existsSync(path.join(version.localPath, filename));
     }
     return false;
   }
 
   async importLocalFrpcVersion(filePath: string) {
+    Logger.info(
+      `VersionService.importLocalFrpcVersion`,
+      `Importing local file: ${filePath}`
+    );
     const checksum = FileUtils.calculateFileChecksum(filePath);
+    const { default: checksumData } =
+      await import("../json/frp_all_sha256_checksums.json");
+    const frpChecksums = checksumData as Record<string, string>;
     const frpName = frpChecksums[checksum];
     if (frpName) {
       if (this._currFrpArch.every(item => frpName.includes(item))) {
+        Logger.info(
+          `VersionService.importLocalFrpcVersion`,
+          `Checksum matched: ${frpName}`
+        );
         const version = this.getFrpVersionByAssetName(frpName);
         const existsVersion = await this._versionDao.findByGithubReleaseId(
           version.githubReleaseId
@@ -179,9 +250,17 @@ class VersionService extends BaseService<FrpcVersion> {
         }
         return this.decompressFrp(version, filePath);
       } else {
+        Logger.warn(
+          `VersionService.importLocalFrpcVersion`,
+          `Architecture mismatch: file=${frpName}, current=${this._currFrpArch.join(",")}`
+        );
         throw new BusinessError(ResponseCode.VERSION_ARGS_ERROR);
       }
     } else {
+      Logger.warn(
+        `VersionService.importLocalFrpcVersion`,
+        `Unknown version, checksum not found: ${checksum}`
+      );
       throw new BusinessError(ResponseCode.UNKNOWN_VERSION);
     }
   }
@@ -197,11 +276,22 @@ class VersionService extends BaseService<FrpcVersion> {
     );
     const ext = path.extname(version.assetName);
     const fileName = path.basename(version.assetName, ext);
+    Logger.info(
+      `VersionService.decompressFrp`,
+      `Decompressing version=${version.name}, src=${compressedPath}, dest=${versionFilePath}`
+    );
     if (ext === GlobalConstant.ZIP_EXT) {
       this._systemService.decompressZipFile(compressedPath, versionFilePath);
       const frpTempPath = path.join(versionFilePath, fileName);
-      fs.renameSync(path.join(frpTempPath, "frpc.exe"), path.join(versionFilePath, PathUtils.getWinFrpFilename()));
+      fs.renameSync(
+        path.join(frpTempPath, "frpc.exe"),
+        path.join(versionFilePath, PathUtils.getWinFrpFilename())
+      );
       fs.rmSync(frpTempPath, { recursive: true, force: true });
+      Logger.info(
+        `VersionService.decompressFrp`,
+        `Decompression completed (zip): ${version.name}`
+      );
     } else if (
       ext === GlobalConstant.GZ_EXT &&
       version.assetName.includes(GlobalConstant.TAR_GZ_EXT)
@@ -210,7 +300,6 @@ class VersionService extends BaseService<FrpcVersion> {
         compressedPath,
         versionFilePath,
         () => {
-          // rename frpc.
           const frpcFilePath = path.join(versionFilePath, "frpc");
           if (fs.existsSync(frpcFilePath)) {
             const newFrpcFilePath = path.join(
@@ -219,8 +308,6 @@ class VersionService extends BaseService<FrpcVersion> {
             );
             fs.renameSync(frpcFilePath, newFrpcFilePath);
           }
-          // delete downloaded file.
-          // todo has bug.
           const downloadedFile = path.join(
             PathUtils.getDownloadStoragePath(),
             version.assetName
@@ -228,11 +315,14 @@ class VersionService extends BaseService<FrpcVersion> {
           if (fs.existsSync(downloadedFile)) {
             fs.rmSync(downloadedFile, { recursive: true, force: true });
           }
+          Logger.info(
+            `VersionService.decompressFrp`,
+            `Decompression completed (tar.gz): ${version.name}`
+          );
         }
       );
     }
 
-    // todo 2025-02-23 delete downloaded file.
     version.localPath = versionFilePath;
     version.downloaded = true;
     return await this._versionDao.insert(version);

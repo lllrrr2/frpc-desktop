@@ -8,27 +8,31 @@ import {
   shell,
   Tray
 } from "electron";
-import { release } from "node:os";
+import { release, totalmem, cpus } from "node:os";
 import node_path, { join } from "node:path";
-import BeanFactory from "../core/BeanFactory";
-import ServerRepository from "../repository/ServerRepository";
-import VersionRepository from "../repository/VersionRepository";
-import ProxyRepository from "../repository/ProxyRepository";
-import SystemService from "../service/SystemService";
-import ServerService from "../service/ServerService";
-import GitHubService from "../service/GitHubService";
-import VersionService from "../service/VersionService";
-import LogService from "../service/LogService";
-import FrpcProcessService from "../service/FrpcProcessService";
-import ProxyService from "../service/ProxyService";
+import { performance } from "node:perf_hooks";
 import ConfigController from "../controller/ConfigController";
-import VersionController from "../controller/VersionController";
-import LogController from "../controller/LogController";
 import LaunchController from "../controller/LaunchController";
+import LogController from "../controller/LogController";
 import ProxyController from "../controller/ProxyController";
 import SystemController from "../controller/SystemController";
+import VersionController from "../controller/VersionController";
+import BeanFactory from "../core/BeanFactory";
 import { ipcRouters, listeners } from "../core/IpcRouter";
 import Logger from "../core/Logger";
+import DatabaseManager from "../database/DatabaseManager";
+import NedbMigrationService from "../database/NedbMigrationService";
+import AppConfigRepository from "../repository/AppConfigRepository";
+import ProxyRepository from "../repository/ProxyRepository";
+import ServerRepository from "../repository/ServerRepository";
+import VersionRepository from "../repository/VersionRepository";
+import FrpcProcessService from "../service/FrpcProcessService";
+import GitHubService from "../service/GitHubService";
+import LogService from "../service/LogService";
+import ProxyService from "../service/ProxyService";
+import ServerService from "../service/ServerService";
+import SystemService from "../service/SystemService";
+import VersionService from "../service/VersionService";
 
 process.env.DIST_ELECTRON = join(__dirname, "..");
 process.env.DIST = join(process.env.DIST_ELECTRON, "../dist");
@@ -40,37 +44,27 @@ const preload = join(__dirname, "../preload/index.js");
 const url = process.env.VITE_DEV_SERVER_URL;
 const indexHtml = join(process.env.DIST, "index.html");
 
-
 class FrpcDesktopApp {
   private _win: BrowserWindow | null = null;
+  private _tray: Tray | null = null;
   private _quitting = false;
+  private _backgroundTasksStarted = false;
+  private readonly _startupStartedAt = performance.now();
 
   constructor() {
-    this.initializeBeans();
-    this.initializeListeners();
-    this.initializeRouters();
     this.initializeElectronApp();
   }
 
-  async initializeWindow() {
-    if (this._win) {
+  async initializeWindow(serverConfig?: OpenSourceFrpcDesktopServer) {
+    if (this._win && !this._win.isDestroyed()) {
       return;
     }
-    const serverService: ServerService = BeanFactory.getBean("serverService");
-
-    if (await serverService.isAutoConnectOnStartup()) {
-      const frpcProcessService: FrpcProcessService =
-        BeanFactory.getBean("frpcProcessService");
-      frpcProcessService.startFrpcProcess().then(() => {
-        Logger.info(
-          `FrpcDesktopApp.initializeWindow`,
-          `AutoConnectOnStartup Completed.`
-        );
-      });
-    }
+    this._win = null;
+    const silentStart = serverConfig?.system.silentStartup ?? false;
+    const windowStartedAt = performance.now();
 
     this._win = new BrowserWindow({
-      title: app.getName(),
+      title: `${app.getName()} v${app.getVersion()} (${process.arch})`,
       icon: join(process.env.VITE_PUBLIC, "logo/only/16x16.png"),
       width: 900,
       height: 600,
@@ -86,9 +80,25 @@ class FrpcDesktopApp {
         nodeIntegration: true,
         contextIsolation: false
       },
-      show: !(await serverService.isSilentStart())
+      show: false
     });
     BeanFactory.setBean("win", this._win);
+    this.logStartupStage("window-created", windowStartedAt);
+
+    this._win.once("ready-to-show", () => {
+      this.logStartupStage("renderer-first-paint");
+      if (!silentStart && !this._quitting) {
+        this._win?.show();
+      }
+    });
+    this._win.webContents.once("did-finish-load", () => {
+      this.logStartupStage("renderer-loaded");
+      this._win?.webContents.send(
+        "main-process-message",
+        new Date().toLocaleString()
+      );
+      this.startBackgroundTasks(serverConfig);
+    });
     if (process.env.VITE_DEV_SERVER_URL) {
       // electron-vite-vue#298
       this._win.loadURL(url).then(() => {});
@@ -98,12 +108,6 @@ class FrpcDesktopApp {
       this._win.loadFile(indexHtml).then(() => {});
     }
 
-    this._win.webContents.on("did-finish-load", () => {
-      this._win?.webContents.send(
-        "main-process-message",
-        new Date().toLocaleString()
-      );
-    });
     this._win.webContents.setWindowOpenHandler(({ url }) => {
       if (url.startsWith("https:")) shell.openExternal(url);
       return { action: "deny" };
@@ -111,7 +115,7 @@ class FrpcDesktopApp {
     Menu.setApplicationMenu(null);
 
     const that = this;
-    this._win.on("minimize", function (event) {
+    (this._win as any).on("minimize", function (event: any) {
       event.preventDefault();
       that._win.hide();
     });
@@ -129,42 +133,140 @@ class FrpcDesktopApp {
     Logger.info(`FrpcDesktopApp.initializeWindow`, `Window initialized.`);
   }
 
+  private logStartupStage(stage: string, startedAt = this._startupStartedAt) {
+    Logger.info(
+      "FrpcDesktopApp.startup",
+      `${stage}: ${(performance.now() - startedAt).toFixed(1)}ms`
+    );
+  }
+
+  private startBackgroundTasks(serverConfig?: OpenSourceFrpcDesktopServer) {
+    if (this._backgroundTasksStarted || this._quitting) {
+      return;
+    }
+    this._backgroundTasksStarted = true;
+    setImmediate(() => {
+      if (this._quitting) {
+        return;
+      }
+      this.initializeListeners();
+      this.initializeTray();
+      const cpuInfo = cpus();
+      Logger.info(
+        "FrpcDesktopApp.systemInfo",
+        [
+          `=== Application Started ===`,
+          `App       : ${app.getName()} v${app.getVersion()}`,
+          `Platform  : ${process.platform} / ${process.arch}`,
+          `OS Release: ${release()}`,
+          `Node.js   : ${process.versions.node}`,
+          `Electron  : ${process.versions.electron}`,
+          `Chrome    : ${process.versions.chrome}`,
+          `CPU       : ${cpuInfo[0]?.model ?? "unknown"} (${cpuInfo.length} cores)`,
+          `Memory    : ${(totalmem() / 1024 / 1024 / 1024).toFixed(1)} GB`,
+          `Log Level : ${serverConfig?.log.level || "info"}`
+        ].join("\n")
+      );
+
+      const frpcProcessService: FrpcProcessService =
+        BeanFactory.getBean("frpcProcessService");
+      const processInitialization = serverConfig?.system.autoConnectOnStartup
+        ? frpcProcessService.startFrpcProcess()
+        : frpcProcessService.restoreExistingProcess();
+      processInitialization
+        .then(() => {
+          this.logStartupStage("background-tasks-ready");
+        })
+        .catch(error => {
+          Logger.error(
+            "FrpcDesktopApp.startBackgroundTasks",
+            error instanceof Error ? error : new Error(String(error))
+          );
+        });
+    });
+  }
+
+  private async showMainWindow() {
+    if (this._quitting) {
+      return;
+    }
+    if (!this._win || this._win.isDestroyed()) {
+      await this.initializeWindow();
+    }
+    const win = this._win;
+    if (!win || win.isDestroyed()) {
+      return;
+    }
+    if (win.isMinimized()) {
+      win.restore();
+    }
+    win.show();
+    win.focus();
+    if (process.platform === "darwin") {
+      await app.dock.show();
+    }
+  }
+
+  private destroyTray() {
+    if (this._tray && !this._tray.isDestroyed()) {
+      this._tray.destroy();
+    }
+    this._tray = null;
+  }
+
   initializeTray() {
-    const that = this;
-    let menu: Array<MenuItemConstructorOptions | MenuItem> = [
+    if (this._tray && !this._tray.isDestroyed()) {
+      return;
+    }
+    const menu: Array<MenuItemConstructorOptions | MenuItem> = [
       {
         label: "显示主窗口",
-        click: function () {
-          that._win.show();
-          if (process.platform === "darwin") {
-            app.dock.show().then(() => {});
-          }
+        click: () => {
+          this.showMainWindow().catch(error => {
+            Logger.error(
+              `FrpcDesktopApp.showMainWindow`,
+              error instanceof Error ? error : new Error(String(error))
+            );
+          });
         }
       },
       {
         label: "退出",
         click: () => {
-          that._quitting = true;
+          this._quitting = true;
+          this.destroyTray();
           // todo stop frpc process
           const frpcProcessService: FrpcProcessService =
             BeanFactory.getBean("frpcProcessService");
-          frpcProcessService.stopFrpcProcess().finally(() => {
-            app.quit();
-          });
-
+          frpcProcessService
+            .stopFrpcProcess()
+            .catch(error => {
+              Logger.error(
+                `FrpcDesktopApp.initializeTray`,
+                error instanceof Error ? error : new Error(String(error))
+              );
+            })
+            .finally(() => {
+              app.quit();
+            });
         }
       }
     ];
-    const tray = new Tray(
+    this._tray = new Tray(
       node_path.join(process.env.VITE_PUBLIC, "logo/only/16x16.png")
     );
-    tray.setToolTip(app.getName());
+    this._tray.setToolTip(app.getName());
     const contextMenu = Menu.buildFromTemplate(menu);
-    tray.setContextMenu(contextMenu);
+    this._tray.setContextMenu(contextMenu);
 
     // 托盘双击打开
-    tray.on("double-click", () => {
-      this._win.show();
+    this._tray.on("double-click", () => {
+      this.showMainWindow().catch(error => {
+        Logger.error(
+          `FrpcDesktopApp.showMainWindow`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+      });
     });
     Logger.info(`FrpcDesktopApp.initializeTray`, `Tray initialized.`);
   }
@@ -180,117 +282,112 @@ class FrpcDesktopApp {
       app.quit();
       process.exit(0);
     }
-    app.whenReady().then(() => {
-      this.initializeWindow().then(() => {});
-      this.initializeTray();
-      // initLog();
-      // logInfo(
-      //   LogModule.APP,
-      //   `Application started. Current system architecture: ${
-      //     process.arch
-      //   }, platform: ${process.platform}, version: ${app.getVersion()}.`
-      // );
-
-      // getConfig((err, config) => {
-      // if (err) {
-      //   logError(LogModule.APP, `Failed to get config: ${err.message}`);
-      //   return;
-      // }
-
-      //   createWindow(config)
-      //     .then(r => {
-      //       logInfo(LogModule.APP, `Window created successfully.`);
-      //       createTray(config);
-      //
-      //       // if (config) {
-      //       //   logInfo(
-      //       //     LogModule.APP,
-      //       //     `Config retrieved: ${JSON.stringify(
-      //       //       maskSensitiveData(config, [
-      //       //         "serverAddr",
-      //       //         "serverPort",
-      //       //         "authToken",
-      //       //         "user",
-      //       //         "metaToken"
-      //       //       ])
-      //       //     )}`
-      //       //   );
-      //       //
-      //       //   if (config.systemStartupConnect) {
-      //       //     startFrpWorkerProcess(config);
-      //       //   }
-      //       // }
-      //       // const ipcRouterConfig = new IpcRouterConfigurate(win);
-      //       // Initialize APIs
-      //       // try {
-      //       //   initGitHubApi(win);
-      //       //   logInfo(LogModule.APP, `GitHub API initialized.`);
-      //       //
-      //       //   initConfigApi(win);
-      //       //   logInfo(LogModule.APP, `Config API initialized.`);
-      //       //
-      //       //   initFileApi();
-      //       //   logInfo(LogModule.APP, `File API initialized.`);
-      //       //
-      //       //   // initUpdaterApi(win);
-      //       //   logInfo(LogModule.APP, `Updater API initialization skipped.`);
-      //       // } catch (error) {
-      //       //   logError(
-      //       //     LogModule.APP,
-      //       //     `Error during API initialization: ${error.message}`
-      //       //   );
-      //       // }
-      //     })
-      //     .catch(error => {
-      //       logError(LogModule.APP, `Error creating window: ${error.message}`);
-      //     });
-      // });
-    });
+    app
+      .whenReady()
+      .then(async () => {
+        const databaseStartedAt = performance.now();
+        const databaseManager = new DatabaseManager();
+        BeanFactory.setBean("databaseManager", databaseManager);
+        databaseManager.initialize();
+        const database = databaseManager.getDatabase();
+        const appConfigRepository = new AppConfigRepository(database);
+        const serverRepository = new ServerRepository(
+          database,
+          appConfigRepository
+        );
+        const versionRepository = new VersionRepository(database);
+        const proxyRepository = new ProxyRepository(database);
+        const nedbMigrationService = new NedbMigrationService(
+          database,
+          appConfigRepository,
+          serverRepository,
+          proxyRepository,
+          versionRepository
+        );
+        await nedbMigrationService.migrate();
+        this.logStartupStage("database-ready", databaseStartedAt);
+        this.initializeBeans(
+          appConfigRepository,
+          serverRepository,
+          versionRepository,
+          proxyRepository
+        );
+        this.initializeRouters();
+        const serverService: ServerService =
+          BeanFactory.getBean("serverService");
+        const serverConfig = await serverService.getServerConfig();
+        Logger.setLevel(serverConfig?.log.level || "info");
+        await this.initializeWindow(serverConfig);
+      })
+      .catch(error => {
+        Logger.error(
+          `FrpcDesktopApp.initializeElectronApp`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+        app.quit();
+      });
 
     app.on("window-all-closed", () => {
-      // logInfo(LogModule.APP, `All windows closed.`);
       this._win = null;
       if (process.platform !== "darwin") {
+        this._quitting = true;
+        this.destroyTray();
         const frpcProcessService: FrpcProcessService =
           BeanFactory.getBean("frpcProcessService");
-        frpcProcessService.stopFrpcProcess().finally(() => {
-          app.quit();
-        });
-        // todo stop frpc process
-        // stopFrpcProcess(() => {
-        //   logInfo(LogModule.APP, `FRPC process stopped. Quitting application.`);
-        // app.quit();
-        // });
+        frpcProcessService
+          .stopFrpcProcess()
+          .catch(error => {
+            Logger.error(
+              `FrpcDesktopApp.window-all-closed`,
+              error instanceof Error ? error : new Error(String(error))
+            );
+          })
+          .finally(() => {
+            app.quit();
+          });
       }
     });
 
     app.on("second-instance", () => {
-      if (this._win) {
-        if (this._win.isMinimized()) this._win.show();
-        if (!this._win.isVisible()) this._win.show();
-        this._win.focus();
-      }
+      this.showMainWindow().catch(error => {
+        Logger.error(
+          `FrpcDesktopApp.showMainWindow`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+      });
     });
 
     app.on("activate", () => {
-      // logInfo(LogModule.APP, `Application activated.`);
-      const allWindows = BrowserWindow.getAllWindows();
-      if (allWindows.length) {
-        allWindows[0].focus();
-      } else {
-        this.initializeWindow();
-      }
+      this.showMainWindow().catch(error => {
+        Logger.error(
+          `FrpcDesktopApp.showMainWindow`,
+          error instanceof Error ? error : new Error(String(error))
+        );
+      });
     });
 
     app.on("before-quit", () => {
-      // todo stop frpc process
       this._quitting = true;
-      const frpcProcessService: FrpcProcessService =
-        BeanFactory.getBean("frpcProcessService");
-      frpcProcessService.stopFrpcProcess().finally(() => {
-      });
+      this.destroyTray();
+      if (BeanFactory.hasBean("frpcProcessService")) {
+        const frpcProcessService: FrpcProcessService =
+          BeanFactory.getBean("frpcProcessService");
+        frpcProcessService.dispose();
+        frpcProcessService.stopFrpcProcess().catch(error => {
+          Logger.error(
+            `FrpcDesktopApp.before-quit`,
+            error instanceof Error ? error : new Error(String(error))
+          );
+        });
+      }
+    });
 
-
+    app.on("will-quit", () => {
+      if (BeanFactory.hasBean("databaseManager")) {
+        const databaseManager: DatabaseManager =
+          BeanFactory.getBean("databaseManager");
+        databaseManager.close();
+      }
     });
 
     Logger.info(
@@ -299,10 +396,16 @@ class FrpcDesktopApp {
     );
   }
 
-  initializeBeans() {
-    BeanFactory.setBean("serverRepository", new ServerRepository());
-    BeanFactory.setBean("versionRepository", new VersionRepository());
-    BeanFactory.setBean("proxyRepository", new ProxyRepository());
+  initializeBeans(
+    appConfigRepository: AppConfigRepository,
+    serverRepository: ServerRepository,
+    versionRepository: VersionRepository,
+    proxyRepository: ProxyRepository
+  ) {
+    BeanFactory.setBean("appConfigRepository", appConfigRepository);
+    BeanFactory.setBean("serverRepository", serverRepository);
+    BeanFactory.setBean("versionRepository", versionRepository);
+    BeanFactory.setBean("proxyRepository", proxyRepository);
     BeanFactory.setBean("systemService", new SystemService());
     BeanFactory.setBean(
       "serverService",
@@ -337,7 +440,8 @@ class FrpcDesktopApp {
       new ConfigController(
         BeanFactory.getBean("serverService"),
         BeanFactory.getBean("systemService"),
-        BeanFactory.getBean("frpcProcessService")
+        BeanFactory.getBean("frpcProcessService"),
+        BeanFactory.getBean("databaseManager")
       )
     );
     BeanFactory.setBean(
@@ -362,10 +466,7 @@ class FrpcDesktopApp {
         BeanFactory.getBean("proxyRepository")
       )
     );
-    BeanFactory.setBean(
-      "systemController",
-      new SystemController()
-    );
+    BeanFactory.setBean("systemController", new SystemController());
     Logger.info(`FrpcDesktopApp.initializeBeans`, `Beans initialized.`);
   }
 
